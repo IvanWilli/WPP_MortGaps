@@ -47,6 +47,9 @@ indicators[ComponentName=="Population"]
 indicators[ComponentName=="Fertility"]
 indicators[ComponentName=="Mortality"]
 indicators[ComponentName=="Life tables"]
+indicators <- get_iitypes() %>% 
+          filter(IndicatorType.ComponentName %in% c("Mortality","Life tables")) %>% 
+          pull("PK_IndicatorID")        
 
 
 ## get_indicatortypes(): Get information about available indicators (IndicatorTypeID)
