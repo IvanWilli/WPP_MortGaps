@@ -1,5 +1,83 @@
 # additional funs --------------------------------------------------------------
 
+# see available data
+plot_data <- function(data){
+        data$IndicatorName <- factor(data$IndicatorName)
+        dodge <- position_dodge(width=0.5)
+        data %>% distinct(IndicatorName,DataSourceShortName,TimeMid) %>% 
+                ggplot(aes(x=TimeMid,y=DataSourceShortName)) +
+                geom_point(aes(color=IndicatorName,shape=IndicatorName),position = dodge)+
+                scale_shape_manual(values=1:nlevels(data$IndicatorName)) +
+                scale_x_continuous(name ="Year",
+                                   limits = c(1940,2020),
+                                   breaks = seq(1940,2020,10), 
+                                   labels = seq(1940,2020,10))+
+                ggtitle("Available Data")+
+                geom_vline(xintercept = c(1950,2020),linetype=2)+
+                theme_bw()
+}
+
+# plot rates with time-age variation
+plot_age_time <- function(data){
+        data$Age[data$Age>100] <- 100 
+        data$Age_col <- cut(data$Age,breaks = 10)
+        data$Date <- as.numeric(data$Date)
+        minim_data <- floor(min(data$Date)/10)*10
+        ggplot() + 
+                geom_line(data = data %>% filter(Type=="main"),
+                          aes(x=as.numeric(Date),y=nMx,
+                              group=factor(Age),
+                              col=factor(Age_col))) +
+                geom_point(data = data %>% filter(Type!="main"),
+                           aes(x=as.numeric(Date),y=nMx, col=factor(Age_col))) + 
+                geom_vline(xintercept = c(1950.5,2020.5),linetype=2)+
+                geom_vline(xintercept = range(data$Date),linetype=2,col=2)+
+                scale_x_continuous(name ="Year",
+                                   breaks = seq(minim_data,2020,10), 
+                                   labels = seq(minim_data,2020,10))+
+                scale_y_log10()+
+                ggtitle("Rates by age-time")+
+                theme_bw()+
+                facet_grid(~Sex)
+}
+
+# plot ex with time variation
+plot_ex_time <- function(data){
+        data$Date <- as.numeric(data$Date)
+        minim_data <- floor(min(data$Date)/10)*10
+        ggplot(data = data %>% filter(Age%in%c(0,60,80)),
+               aes(x=as.numeric(Date),y=as.numeric(ex),
+                   group=factor(Age),
+                   col=factor(Type))) + 
+                geom_line() + geom_point(aes(shape=factor(Age))) +
+                geom_vline(xintercept = c(1950.5,2020.5),linetype=2)+
+                geom_vline(xintercept = range(data$Date),linetype=2,col=2)+
+                scale_x_continuous(name ="Year",
+                                   breaks = seq(minim_data,2020,10), 
+                                   labels = seq(minim_data,2020,10))+
+                labs(y="e(x)")+
+                ggtitle("Life expectancy at different ages")+
+                theme_bw()+
+                facet_grid(~Sex)
+}
+
+# remove zero rates: spline on lx on those zero cells
+remove_zero_rates <- function(input, Age_output = 0:100){
+        if(any(input$nMx==0)){
+                input_no_zeros <- input %>% filter(nMx!=0)
+                lx <- data.frame(Age = Age_output, 
+                                 lx = splinefun(x = input_no_zeros$Age, 
+                                                y = input_no_zeros$lx, 
+                                                method = "monoH.FC")(Age_output))
+                out <- lt_single_qx(nqx = lt_id_l_q(lx$lx),Age = lx$Age, extrapFrom = 100, OAnew = 100)
+                out <- bind_cols(out,input[,c("Date","Type","Sex")])
+                return(out)
+        }else{
+                return(input)
+        }
+}
+
+# lee carter fun
 lc <- function(input, dates_out){
      dates_in = sort(unique(as.numeric(input$Date)))
      input %>% split(input$Sex) %>% 
@@ -7,6 +85,7 @@ lc <- function(input, dates_out){
                M <- X %>% select(Date,nMx,Age) %>% 
                     pivot_wider(names_from = Date, values_from = nMx)   %>% 
                     select(-Age) %>% as.matrix()
+               # browser()
                ndates_in <- ncol(M)
                ax  <- rowSums(log(M))/ndates_in
                M_svd      <- svd(log(M)-ax)
@@ -27,105 +106,6 @@ lc <- function(input, dates_out){
                
           }) %>% 
           do.call("rbind", .)
-}
-
-# diagnostic gaps
-# years_gap <- sort(dates_out[which(!dates_out %in% unique(m_single$TimeLabel))])
-# intervals_gap <- split(years_gap, cumsum(c(1, diff(years_gap) != 1)))
-# stopifnot(length(years_gap)!=0)
-
-# rule for each gap (try from right to left next)
-# for(gap in intervals_gap){
-#      # gaps in starting period; gap = intervals_gap[[1]]
-#      if(1950 %in% gap){
-#           if(length(gap)>=5){
-#                m_1950 <- get_m_1950(m_data, gap)
-#                # create a pivot in 1950 and use LC lim     
-#           }else{
-#                # apply lc lim
-#           }
-#           
-#      }
-#      # gaps finishing period
-#      if(2020 %in% gap){
-#           if(length(gap)<=5){
-#                # use LC with previos years (until previous gap) and forecast only 5     
-#           }else{
-#                stop("sorry...")
-#           }
-#      }
-#      # gaps in the middle
-#      if(2020 %in% gap){
-#           if(length(gap)<=10){
-#                # interpolate
-#           }else{
-#                # use relational method
-#           }
-#      }
-# }
-
-# design out
-
-# diagnostics outs
-
-# out
-
-
-# get a lt near 1950 to interpolate
-get_m_1950 <- function(m_data, gap){
-     m_abr <- m_data %>% filter(IndicatorName=="m(x,n) - abridged", TimeMid<=max(gap), TimeMid>=1945)
-     if(nrow(m_abr)!=0){
-          # get abr lt
-          m_abr <- m_data %>% filter(IndicatorName=="m(x,n) - abridged", TimeMid<=max(gap), TimeMid>=1945, SexName == "Female")
-          m_abr_single <- lt_abridged2single(nMx = m_abr$DataValue, Age = m_abr$AgeStart,Sex = "f") 
-          m_pivot_1950 <- m_abr_single
-     }
-     if(nrow(m_abr)==0){
-          # get a lt model in 1950
-          DemoTools::lt_model_lq(Sex = "f", q0_5 = 0.05, e0 = 65)
-          demogR::cdmltw()
-     }
-}
-
-# function to get data from WPP server
-get_data <- function(country = NULL, 
-                     indicatorIds = c(255,256,234,239,272,245,246),years){
- 
-# get_iitypes() %>% 
-#         filter(PK_IndicatorID %in% c(255,256,234,239,272,245,246))
-
-options(unpd_server = "https://popdiv.dfs.un.org/DemoData/api/")
-     out <- get_recorddata(dataProcessTypeIds = c(6, 7, 9, 10),
-                           startYear = min(floor(years)),
-                           endYear = max(floor(years))+1,
-                           indicatorIds = indicatorIds,
-                           locIds = country,
-                           locAreaTypeIds = 2,     ## "Whole area"
-                           subGroupIds = 2,        ## "Total or All groups"
-                           includeUncertainty = FALSE,
-                           collapse_id_name = FALSE) %>% 
-          as.data.table() %>% deduplicates(.)
-     out
-     out[, .(IndicatorName, DataSourceShortName, DataReliabilitySort,
-             SexName, AgeStart, AgeSpan, 
-             TimeLabel, TimeMid, TimeDuration, DataValue)]
-}
-
-# see available data
-plot_data <- function(data){
-        data$IndicatorName <- factor(data$IndicatorName)
-        dodge <- position_dodge(width=0.4)
-        data %>% distinct(IndicatorName,DataSourceShortName,TimeMid) %>% 
-                ggplot(aes(x=TimeMid,y=DataSourceShortName)) +
-                geom_point(aes(color=IndicatorName,shape=IndicatorName),position = dodge)+
-                scale_shape_manual(values=1:nlevels(data$IndicatorName)) +
-                scale_x_continuous(name ="Year",
-                                   limits = c(1940,2020),
-                                   breaks = seq(1940,2020,10), 
-                                   labels = seq(1940,2020,10))+
-                ggtitle(paste0(data$LocName[1],". Available Data"))+
-                geom_vline(xintercept = c(1950,2020),linetype=2)+
-                theme_bw()
 }
 
 ## de-duplicate function to rank and filter series based on different set of criteria (function took from PG)
@@ -176,25 +156,5 @@ deduplicates <- function(myDT) {
      myDT$nrank2 <- NULL
      
      return(myDT)
-}
-
-plot_age_time <- function(data){
-     data$Age[data$Age>100] <- 100 
-     data$Age_col <- cut(data$Age,breaks = 10)
-     data$Date <- as.numeric(data$Date)
-     minim_data <- floor(min(data$Date)/10)*10
-     ggplot(data) + 
-          geom_line(aes(x=as.numeric(Date),y=nMx,
-                        group=factor(Age),
-                        col=factor(Age_col))) +
-          geom_vline(xintercept = c(1950.5,2020.5),linetype=2)+
-          geom_vline(xintercept = range(data$Date),linetype=2,col=2)+
-          scale_x_continuous(name ="Year",
-                             breaks = seq(minim_data,2020,10), 
-                             labels = seq(minim_data,2020,10))+
-          scale_y_log10()+
-          scale_fill_continuous(name = "New Legend Title")+
-          theme_bw()+
-          facet_grid(~Sex)
 }
 
