@@ -1,5 +1,68 @@
 # additional funs --------------------------------------------------------------
 
+is_data_valid <- function(country_data){
+        validation <- country_data %>%
+                split(list(.$IndicatorName, .$DataSourceShortName, 
+                           .$SexName, .$TimeLabel), drop = T) %>% 
+                lapply(function(X){
+                # browser()
+                Age <- X$AgeStart
+                AgeInt <- X$AgeSpan
+                AgeInt[AgeInt<1] <- NA
+                validated <- coherence <- "not LT"
+                abr_ages <- c(0,1,seq(5,60,5)) 
+                # is a lifetable
+                if(str_detect(X$IndicatorName[1],"x")){
+                        coherence <- is_age_coherent(Age, AgeInt)
+                        single_ok <- is_single(Age) & all(0:60 %in% Age)
+                        abridg_ok <- is_abridged(Age[Age %in% abr_ages]) & all(abr_ages %in% Age)
+                        validated <- ifelse(single_ok, "complete", 
+                                            ifelse(abridg_ok,"abridged", 
+                                                   "error"))
+                }
+                validation_i <- X %>% 
+                                mutate(validation = validated, coherence = coherence)
+                validation_i
+                }
+                ) %>% 
+        do.call(rbind,.) %>% 
+        remove_rownames(.)
+        
+        validation
+}
+
+# select data for each point
+select_data <- function(country_data, exception = NULL){
+        
+        source_herarchy <- tibble(DataSourceShortName= c("HMD","EuroStat","HLD 2020","WPP","WHO DB","DYB","GBD 2016"),
+                                  index = 1:7)
+        country_data$TimeMid_floor <- floor(country_data$TimeMid) 
+        
+        time_data <- sort(unique(country_data$TimeMid_floor))
+        for(year in time_data){
+                selection <- country_data %>%
+                        filter(TimeMid_floor == year, 
+                               str_detect(IndicatorName,"x"),
+                               !DataSourceShortName %in% exception) %>% 
+                        group_by(DataSourceShortName, TimeMid_floor, TimeMid, IndicatorName) %>% 
+                        summarise(complete = is_single(unique(AgeStart)), OAG = max(AgeStart)) %>% 
+                        left_join(source_herarchy,by = "DataSourceShortName") %>% 
+                        ungroup() %>% 
+                        arrange(desc(complete),
+                                index,
+                                desc(IndicatorName)) %>% # first rates 
+                        slice(1)
+                if(year == time_data[1]){
+                        out <- selection
+                }else{
+                        out <- bind_rows(out, selection)
+                }
+        }
+        
+        out
+}
+
+
 # see available data
 plot_data <- function(data){
         data$IndicatorName <- factor(data$IndicatorName)
@@ -63,7 +126,8 @@ plot_ex_time <- function(data){
 
 # remove zero rates: spline on lx on those zero cells
 remove_zero_rates <- function(input, Age_output = 0:100){
-        if(any(input$nMx==0)){
+        
+        if(isTRUE(any(input$nMx==0))){
                 input_no_zeros <- input %>% filter(nMx!=0)
                 lx <- data.frame(Age = Age_output, 
                                  lx = splinefun(x = input_no_zeros$Age, 
@@ -85,7 +149,7 @@ lc <- function(input, dates_out){
                M <- X %>% select(Date,nMx,Age) %>% 
                     pivot_wider(names_from = Date, values_from = nMx)   %>% 
                     select(-Age) %>% as.matrix()
-               # browser()
+               browser()
                ndates_in <- ncol(M)
                ax  <- rowSums(log(M))/ndates_in
                M_svd      <- svd(log(M)-ax)

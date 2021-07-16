@@ -14,6 +14,10 @@ tier1 <- readxl::read_xlsx("data/Country_availability_summary.xlsx",
 locs <- get_locations()
 locs_tier1 <- locs %>% filter(Name %in% tier1) %>% pull(PK_LocID)
 lista2_tier1 <- list()
+all_Indicadors <- get_iitypes() %>% 
+        filter(IndicatorType.ComponentName %in% c("Mortality","Life tables")) %>% 
+        select(PK_IndicatorID, Name, IndicatorType.ComponentName)
+
 indicatorIds = c(255,256,234,239,272,245,246)
 
 # go server
@@ -50,3 +54,17 @@ for(i in 1:length(lista2_tier1)){
      name <- unique(lista2_tier1[[i]]$LocName)
      write.csv(lista2_tier1[[i]],paste0("data/",name,".csv"), row.names = F)
 }
+
+### specific country - extra data
+indicatorIds_extra = c(255,256,234,239,272,245,246,
+                       219,220,229,253)
+out <- get_recorddata(dataProcessTypeIds = c(6, 7, 9, 10),
+                      startYear = 1940,
+                      endYear = 2020,
+                      indicatorIds = indicatorIds_extra,
+                      locIds = 498,
+                      locAreaTypeIds = 2,     ## "Whole area"
+                      subGroupIds = 2,        ## "Total or All groups"
+                      includeUncertainty = FALSE,
+                      collapse_id_name = FALSE) %>% 
+        as.data.table() %>% deduplicates(.)
