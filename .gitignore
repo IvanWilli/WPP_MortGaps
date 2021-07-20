@@ -3,6 +3,8 @@
 .RData
 .Ruserdata
 /data
+/biblio
+/dev
 .csv
 .xlsx
 .xls
