@@ -1,0 +1,39 @@
+---
+title: "workflow_fill_gaps"
+author: "IW"
+date: "19/7/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Worflow
+
+- Download data
+
+- Set data validation
+
+- filter data with error
+
+- select data with criteria
+     - classify as "main" in case ii is not disperse
+     - get max OAG to smooth with the same
+
+- detect the gaps
+
+- do a complete lf for each combination of Sex and Date, usgin a unique extrapFrom and OAG
+
+- remove zeros for extrapoaltion purposes
+
+- loop over the gaps
+     - include 1950.5: apply LC with limited data in case there are some observed point after 1940, that helps to interpolate. If not, use LC.
+     - include 2020.5: apply LC
+     - not include 1950.5 and 2020.5: apply LC with limited data using data on the right and the left.
+     
+- bind selected data with filled gaps
+
+- make plot and tables
+
+- set a list as return
