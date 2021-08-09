@@ -7,7 +7,8 @@
 /dev
 /meets
 /admin
-/plots/other_plots
+/plots
+/inputfiles
 .csv
 .xlsx
 .xls
