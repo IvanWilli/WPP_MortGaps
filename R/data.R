@@ -25,7 +25,7 @@ lista_tier1 <- list()
 j = 1
 for(i in seq_along(locs_tier1)){
      out <- get_recorddata(dataProcessTypeIds = c(6, 7, 9, 10),
-                           startYear = 1940,
+                           startYear = 1950,
                            endYear = 2020,
                            indicatorIds = indicatorIds_extra,
                            locIds = locs_tier1[i],
@@ -61,9 +61,9 @@ for(i in 1:length(lista2_tier1)){
 indicatorIds_extra = c(indicatorIds,
                        219,220,229,253,273,274)
 Albania_data <- get_recorddata(dataProcessTypeIds = c(6, 7, 9, 10),
-                      startYear = 1940,
+                      startYear = 1980,
                       endYear = 2020,
-                      indicatorIds = indicatorIds_extra,
+                      indicatorIds = indicatorIds,
                       locIds = 8,
                       locAreaTypeIds = 2,     ## "Whole area"
                       subGroupIds = 2,        ## "Total or All groups"
@@ -71,9 +71,53 @@ Albania_data <- get_recorddata(dataProcessTypeIds = c(6, 7, 9, 10),
                       collapse_id_name = FALSE) %>% 
         as.data.table() %>% 
         deduplicates(.)
-
+Albania_data %>% count(DataSourceShortName, DataTypeName)
 
 # HMD plot ----------------------------------------------------------------
+HMD_indicators <- c(
+                    250, # Probability of dying 15-60 (45q15)
+                    266, # E(x) - abridged
+                    229, # Infant mortality (1q0)
+                    239  # Under-five mortality (5q0)
+                        )
+HMD_data <- list()
+j = 1
+library(HMDHFDplus)
+HMD_countries <- fertestr::locs_avail() %>% 
+                        inner_join(tibble(location_code_iso3 = HMDHFDplus::getHMDcountries()))
+for(i in seq_along(HMD_countries$location_code)){
+    out <- get_recorddata(dataProcessTypeIds = c(6, 7, 9, 10),  
+                          startYear = 1950,
+                          endYear = 2020,
+                          indicatorIds  = HMD_indicators,
+                          dataSourceShortNames = "HMD",
+                          dataSourceYears = HMD_Year,
+                          locIds = as.integer(HMD_countries$location_code[i]),
+                          locAreaTypeIds = 2,
+                          subGroupIds = 2) %>% 
+            as.data.table() %>% deduplicates(.)
+    HMD_data[[j]] = out 
+    print(j)
+    j = j + 1
+}
+                    
+# bind all
+HMD_data <- HMD_data %>% bind_rows(.id = "LocName")
+save(HMD_data, file = "data/HMD_data.Rdata")
+
+
+# next --------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
 files <- c(list.files(path = "data/HMD/fltper_1x1", full.names = T),
            list.files(path = "data/HMD/mltper_1x1", full.names = T))
 HMD_data <- map(files, function(X) {read.table(X, skip = 2, header = T) %>% 
