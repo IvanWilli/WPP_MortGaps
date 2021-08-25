@@ -9,7 +9,10 @@
 /meets
 /admin
 /plots
-/inputfiles
+/WPP2021_plots
+/InputFiles
+/GlobalFiles
+/app
 .csv
 .xlsx
 .xls
