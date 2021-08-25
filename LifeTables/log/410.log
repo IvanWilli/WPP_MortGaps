@@ -1,0 +1,17 @@
+=========================================================================
+Log Path: C:/Proyectos/WPP_MortGaps/LifeTables/log/410.log
+Working Directory: C:/Proyectos/WPP_MortGaps
+User Name: User
+R Version: 4.0.2 (2020-06-22)
+Machine: DESKTOP-KLE8ANG x86-64
+Operating System: Windows 10 x64 build 19043
+Log Start Time: 2021-08-24 10:02:40
+=========================================================================
+
+Error in fill_gaps(country = country_full, dirs = data.frame(LT_dir = LT_dir,  : 
+  Not developed yet
+
+
+NOTE: Log Print Time:  2021-08-24 10:02:44
+NOTE: Elapsed Time in seconds: 3.72779607772827
+

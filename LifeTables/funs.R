@@ -1,19 +1,19 @@
-# additional funs --------------------------------------------------------------
+# author: IW
+# set of functions used in `fill_gaps.R` and `fill_gaps_lt.R`.
 
-# get id or name of countries
+# get id, shor name or compelte name of countries. `fertestr` is used
 get_ID_Name <- function(x){
-        wpp_locs <- DDSQLtools::get_locations()
+        wpp_locs <- fertestr::locs_avail()
         out <- wpp_locs %>% 
-                filter(x==PK_LocID | x==Name) %>% 
-                select(PK_LocID, Name)
-        Code_iso <- fertestr::locs_avail() %>% 
-                filter(location_code==out$PK_LocID) %>% 
-                pull(location_code_iso3)
+                filter(x==location_code | x==location_name | toupper(x)==location_code_iso3) %>% 
+                select(PK_LocID=location_code, 
+                       Name=location_name,
+                       Code_iso = location_code_iso3)
         stopifnot(nrow(out)==1)
-        return(cbind(out,Code_iso))
+        return(out)
 }
 
-# add wpp19 data for 1950-1955 in case it is needed
+# add wpp19 data for 1950-1955 in case it is needed. Warning: not all countries are there.
 add_wpp19_1950data <- function(country, country_data){
         wpp19_lt <- DemoToolsData::WPP2019_lt %>%
                 filter(LocID == country, Year == 1953, Sex!="b") %>% 
@@ -24,23 +24,21 @@ add_wpp19_1950data <- function(country, country_data){
                 rename(SexName=Sex) %>% 
                 select(-LocID, -Year)
         out <- country_data %>% bind_rows(wpp19_lt)
-        out
+        return(out)
 }
 
-# ask if is m or l
+# ask if an indicator is "m" or "l" type
 is_m_or_l <- function(x){
         ifelse(str_detect(x, "m\\(x"),"m",
                    ifelse(str_detect(x, "l\\(x"),"l",NA))
 }
 
-# check data validation
+# check data validation: can be labelled as abridged or complete?
 is_data_valid <- function(country_data, pop){
-        # browser()
         validation <- country_data %>%
                 split(list(.$IndicatorName, .$DataSourceShortName, 
                            .$SexName, .$TimeLabel, .$DataTypeSort), drop = T) %>% 
                 lapply(function(X){
-                        # if(X$TimeMid %in% '1990.5'){browser()}
                         validated <- coherence <- "not LT"
                         abr_ages <- c(0,1,seq(5,60,5)) 
                         # is a lifetable first, then wich one
@@ -88,13 +86,16 @@ is_data_valid <- function(country_data, pop){
         return(validation)
 }
 
-# impute
-impute_data <- function(data, pop, k = 3, epsilon = .0000001){
+# impute data cases: 
+        # fill/smooth zeroes ages, 
+        # split an abridged lt with initial group 0-5
+        # group into 1-5 in case and abr lt is split by simple age on those ages 
+impute_data <- function(data, pop, k = 3, epsilon = NULL){
 
         # remove zeros
         if(is.null(epsilon)){
                 epsilon <- data %>% 
-                        filter(is_m_or_l(unique(IndicatorName))=="m", DataValue>0) %>% 
+                        filter(is_m_or_l(IndicatorName)=="m", DataValue>0) %>% 
                         summarise(min(DataValue)/2) %>% pull()
         }
         data <- data %>% 
@@ -152,12 +153,55 @@ impute_data <- function(data, pop, k = 3, epsilon = .0000001){
                                                 select(-to_split),
                                         data %>% filter(!ID %in% data_imputed$ID))
         }else{
+                data <- data 
+        }
+        
+        # abr lt with ages 0:5
+        # an id just to track filter
+        data$ID <- 1:nrow(data)
+        # detect 0-5 cases on mx (not lx)
+        data_to_agr <- data %>% 
+                filter(is_m_or_l(IndicatorName)=="m", 
+                       (AgeStart == 2 | AgeStart == 3 | AgeStart == 4), 
+                       validation == "abridged") %>%
+                mutate(to_agr = 1) %>% 
+                distinct(DataSourceShortName,TimeLabel,IndicatorName,SexName,DataTypeSort,to_agr) %>% 
+                inner_join(data,by=c("DataSourceShortName","TimeLabel","IndicatorName","SexName","DataTypeSort")) %>% 
+                filter(to_agr==1) %>% 
+                distinct()
+        
+        if(nrow(data_to_agr)>0){
+                # browser()
+                data_imputed <- data_to_agr %>% 
+                        split(list(.$DataSourceShortName, .$TimeLabel, .$SexName, .$DataTypeSort), drop=T) %>% 
+                        map_df(.f = function(X) {agr_1_5(X)})
+                data_output <- rbind(data_imputed %>% 
+                                             mutate(validation = "grouped") %>% 
+                                             filter(!AgeStart %in% 2:4) %>% 
+                                             select(-to_agr),
+                                     data %>% filter(!ID %in% data_imputed$ID))
+        }else{
                 data_output <- data 
         }
+        
+        # output
         return(data_output %>% select(-ID))
 }
 
-# split first group
+# group first ages of an abr lt in case it has 0:4 ages
+agr_1_5 <- function(X){
+        # X=data_to_agr %>% filter(TimeLabel==1950,SexName=="f")
+        new_nMx <- lt_ambiguous(nMx_or_nqx_or_lx = X$DataValue, type = "m", Age = 0:(nrow(X)-1), 
+                                Sex = unique(X$SexName), Single = F) %>% 
+                filter(Age %in% 0:1) %>% pull(nMx)
+        X$DataValue[X$AgeStart==0] = new_nMx[1]
+        X$DataValue[X$AgeStart==1] = new_nMx[2]
+        X$AgeSpan[X$AgeStart==1] = 4
+        out <-X
+        return(out)
+}
+
+# split first group in case is 0-5
 split_abr_0_5 <- function(X, pop){
         # x <- data_to_split %>% slice(1)
         # country_LocID = country_full$PK_LocID
@@ -191,7 +235,7 @@ split_abr_0_5 <- function(X, pop){
         return(out)
 }
 
-# select data for each point
+# select data for each time
 select_data <- function(country_data){
         
         # herarchy structure
@@ -207,7 +251,7 @@ select_data <- function(country_data){
         lonely_points <- country_data %>% 
                 count(DataSourceShortName, TimeMid_floor) %>% 
                 pivot_wider(names_from=DataSourceShortName, values_from=n) %>% 
-                right_join(tibble(TimeMid_floor = 1940:2020)) %>% 
+                right_join(tibble(TimeMid_floor = 1940:2020), by = "TimeMid_floor") %>% 
                 arrange(TimeMid_floor) %>% 
                 mutate_at(vars(-TimeMid_floor),
                           ~ifelse(!is.na(.)&is.na(lag(.))&is.na(lead(.)),1,0)) %>% 
@@ -215,7 +259,7 @@ select_data <- function(country_data){
         
         # selection: turno to map when it is final
         for(year in time_data){
-                # if(year == 1980)browser()
+                # if(year == 1950)browser()
                 selection_y <- country_data %>%
                         filter(TimeMid_floor == year, validation!="not LT") %>%
                         group_by(DataSourceShortName, TimeMid_floor, TimeMid, TimeLabel, 
@@ -232,7 +276,7 @@ select_data <- function(country_data){
                                 Index, # herarchy
                                 nrank3, DataTypeSort, # this take care of HLD options
                                 desc(complete), # firs complete
-                                IndicatorName, # first lx
+                                desc(IndicatorName), # first mx
                                 is_avg_years) # first not avg years adta
                 best_y <- selection_y %>% slice(1)
                 option_y <- selection_y %>% 
@@ -248,9 +292,8 @@ select_data <- function(country_data){
                         option <- bind_rows(option_y, option)
                 }
         }
-        # browser()
         
-        # decide if overlapping
+        # decide between sources in casethere is some overlapping years
         desoverl <- desoverlap(option, country_data)
         
         # final selection
@@ -260,23 +303,23 @@ select_data <- function(country_data){
                 group_by(DataSourceShortName, TimeMid) %>% 
                 arrange(TimeMid,
                         desc(complete), # firs complete
-                        IndicatorName) %>% 
+                        desc(IndicatorName)) %>% 
                 slice(1) %>% 
                 distinct() %>% 
-                mutate(DataSourceShortName=dsF) %>% 
-                select(-dsF) %>%
+                mutate(DataSourceShortName=dsF) %>% select(-dsF) %>%
                 ungroup() %>% 
                 arrange(TimeMid)
         
         # remove lonelys just next to serie
         final <- final %>% filter(!(Lonely==1 & (TimeMid-lead(TimeMid))==-1))
-                        
+        
         # return
         return(final)
 }
 
 # decide on overlapping periods
-desoverlap <- function(option, country_data, ...){
+desoverlap <- function(option, country_data, treshold = .02, ...){
+        
         # detect overlaps
         overl <- option %>%
                 group_by(TimeMid_floor) %>% mutate(id = row_number()) %>% 
@@ -289,7 +332,7 @@ desoverlap <- function(option, country_data, ...){
                 mutate(ds2 = ifelse(is.na(ds2),"No",ds2)) %>% 
                 as.data.frame()
         
-        # separate groups (not proud of it)
+        # separate groups (not proud of this code)
         group = 1
         for(i in 2:nrow(overl)){
                 # i = 2
@@ -299,7 +342,6 @@ desoverlap <- function(option, country_data, ...){
                 }else{
                         group[i] = group[i-1]+1 
                 }
-                # print(i)
         }
         overl$groups <- group
 
@@ -312,7 +354,6 @@ desoverlap <- function(option, country_data, ...){
         desoverl <- overl %>% 
                 split(list(.$ds1,.$ds2, .$groups), drop=T) %>% 
                 lapply(function(X){
-                        # X = overl %>% filter(ds1== "EuroStat")
                         Xds1 <- unique(X$ds1)
                         Xds2 <- unique(X$ds2)
                         Date <- X$TimeMid
@@ -346,14 +387,14 @@ desoverlap <- function(option, country_data, ...){
                                                        str_detect(IndicatorName,"l\\(x")) %>% 
                                                 lt_ambiguous(nMx_or_nqx_or_lx = .$DataValue,
                                                              type = "l", Sex = "f",
-                                                             Age = .$AgeStart, Single = TRUE, ...)
+                                                             Age = .$AgeStart, Single = FALSE, ...)
                                         l1_post <- country_data %>% 
                                                 filter(DataSourceShortName == ds_prev,
                                                        TimeMid_floor %in% date_post, SexName=="f", 
                                                        str_detect(IndicatorName,"l\\(x"))%>% 
                                                 lt_ambiguous(nMx_or_nqx_or_lx = .$DataValue,
                                                              type = "l", Sex = "f",
-                                                             Age = .$AgeStart, Single = TRUE, ...)
+                                                             Age = .$AgeStart, Single = FALSE, ...)
                                         l1_ds1 <- country_data %>% 
                                                 filter(DataSourceShortName == Xds1,
                                                        TimeMid_floor %in% Date, SexName=="f", 
@@ -362,7 +403,7 @@ desoverlap <- function(option, country_data, ...){
                                                 lapply(function(X){
                                                         lt_ambiguous(nMx_or_nqx_or_lx = X$DataValue,
                                                                      type = "l", Sex = "f",
-                                                                     Age = X$AgeStart, Single = TRUE, ...)         
+                                                                     Age = X$AgeStart, Single = FALSE, ...)         
                                                 }) %>% bind_rows(.)
                                         b = (l1_post$ex[1]-l1_prev$ex[1])/(date_post-date_prev)
                                         e0_hat <- l1_prev$ex[1] + (Date-date_prev) * b
@@ -374,7 +415,7 @@ desoverlap <- function(option, country_data, ...){
                                         # relative diference
                                         rel_dif_lineal <- (e0_hat-e0_ds1)/e0_hat
                                         # greater than 2%
-                                        if(any(abs(rel_dif_lineal)>.02)){
+                                        if(any(abs(rel_dif_lineal)>treshold)){
                                                 out <- X %>% mutate(dsF = ds2)
                                         }else{
                                                 out <- X %>% mutate(dsF = ds1)
@@ -409,10 +450,9 @@ remove_zero_rates <- function(input, Age_output = 0:100, ...){
         }
 }
 
-# lee carter fun
+# lee carter function
 lc <- function(input, dates_out, jump_off = TRUE, prev_cross_over = FALSE, male_weight = .48,
                LC_fit_e0 = FALSE, params_out = FALSE, ...){
-     # dates_out = 2010.5:2020.5
         dates_in <- sort(unique(as.numeric(input$Date)))
         params <- lc_params(input, male_weight)
         # fit k
@@ -452,18 +492,21 @@ lc <- function(input, dates_out, jump_off = TRUE, prev_cross_over = FALSE, male_
         params$Kt <- Kt_star
         }
         
-        # prev divergence sex: only common factor model (Li, 2005)
+        # prev divergence sex: only common factor model (Li, 2005). Neither convergence nor divergence
         if(!prev_cross_over){
-                     M_hat_males <- lc_forecast(params$ax_male,params$bx_male,params$kt_male,params$M_male, Sex="m",
+                     M_hat_males   <- lc_forecast(params$ax_male,params$bx_male,params$kt_male,params$M_male, Sex="m",
                                                 dates_in, dates_out,jump_off)
                      M_hat_females <- lc_forecast(params$ax_female,params$bx_female,params$kt_female,params$M_female,Sex="f",
                                                 dates_in, dates_out,jump_off)
              }
         if(prev_cross_over){
-                     M_hat_males <- lc_forecast(params$ax_male,params$Bx,params$Kt,params$M_male, Sex="m",
+                     M_hat_males   <- lc_forecast(params$ax_male,params$Bx,params$Kt,params$M_male, Sex="m",
                                                 dates_in, dates_out,jump_off)
                      M_hat_females <- lc_forecast(params$ax_female,params$Bx,params$Kt,params$M_female, Sex="f",
                                                   dates_in, dates_out,jump_off)
+                     # if ACF is choosen, then:
+                        # forecast each k_ACF and apply:
+                        # M_hat <- exp(ax + Bx %*% t(Kt_ACF_forecast) + Bx %*% t(kt_ACF_forecast))
              }
         M_hat <- rbind(M_hat_males, M_hat_females)
         
@@ -475,7 +518,7 @@ lc <- function(input, dates_out, jump_off = TRUE, prev_cross_over = FALSE, male_
         }
      }
 
-# project lc
+# project or retro-project with LC parameters
 lc_forecast <- function(ax, bx, kt, M, Sex, dates_in, dates_out, jump_off){
         # browser()
         kt_diff <- diff(kt)
@@ -486,7 +529,7 @@ lc_forecast <- function(ax, bx, kt, M, Sex, dates_in, dates_out, jump_off){
         kt_forecast <- head(kt, 1) + (h * kt_drift)
         # if there is a jump off
         ndates_in <- ncol(M)
-        if(!jump_off){
+        if(jump_off){
                 if(all(h<0)){
                         ax <- log(M[,1])
                         h <- dates_out - min(dates_in)}
@@ -504,7 +547,7 @@ lc_forecast <- function(ax, bx, kt, M, Sex, dates_in, dates_out, jump_off){
         M_hat
 }
 
-# parameters estimation
+# LC parameters estimation
 lc_params   <- function(input, male_weight = .48){
                 # same bx and kt (for the moment)
                 M_male <- input %>%
@@ -519,31 +562,56 @@ lc_params   <- function(input, male_weight = .48){
                                 select(-Age) %>% as.matrix()
                 ndates_in <- ncol(M_male)
                 
+                # males
                 ax_male  <- rowSums(log(M_male))/ndates_in
                 M_svd_male      <- svd(log(M_male)-ax_male)
                 bx_male         <- M_svd_male$u[, 1]/sum(M_svd_male$u[, 1])
+                # consistency for b(x) negatives
+                bx_male[bx_male<0] <- 0
+                bx_male         <- bx_male/sum(bx_male)
                 kt_male         <- M_svd_male$d[1] * M_svd_male$v[, 1] * sum(M_svd_male$u[, 1]) 
                 
+                # females
                 ax_female  <- rowSums(log(M_female))/ndates_in
                 M_svd_female      <- svd(log(M_female)-ax_female)
                 bx_female         <- M_svd_female$u[, 1]/sum(M_svd_female$u[, 1])
+                # consistency for b(x) negatives
+                bx_female[bx_female<0] <- 0
+                bx_female         <- bx_female/sum(bx_female)
                 kt_female         <- M_svd_female$d[1] * M_svd_female$v[, 1] * sum(M_svd_female$u[, 1]) 
                 
+                # common factor model
                 common_cols <- intersect(colnames(M_male),colnames(M_female)) # some countries have error data and not equal btw sex
                 M_both <- M_male[,common_cols] * male_weight + M_female[,common_cols] * (1-male_weight)
                 ax_both  <- rowSums(log(M_both))/ndates_in
                 M_svd_both      <- svd(log(M_male)-ax_male)
+                # consistency for b(x) negatives
                 Bx         <- M_svd_both$u[, 1]/sum(M_svd_both$u[, 1])
+                Bx[Bx<0]   <- 0
+                Bx         <- Bx/sum(Bx)
                 Kt         <- M_svd_both$d[1] * M_svd_both$v[, 1] * sum(M_svd_both$u[, 1]) 
+                
+                # augmented common factor model
+                # M_svd_ACF_male   <- svd(log(M_male) - ax_male - Bx %*% t(Kt))
+                # bx_ACF_male        <- M_svd_ACF_male$u[, 1]/sum(M_svd_ACF_male$u[, 1])
+                # kt_ACF_male        <- M_svd_ACF_male$d[1] * M_svd_ACF_male$v[, 1] * sum(M_svd_ACF_male$u[, 1]) 
+                # M_svd_ACF_female   <- svd(log(M_female) - ax_female - Bx %*% t(Kt))
+                # bx_ACF_female      <- M_svd_ACF_female$u[, 1]/sum(M_svd_ACF_female$u[, 1])
+                # kt_ACF_female      <- M_svd_ACF_female$d[1] * M_svd_ACF_female$v[, 1] * sum(M_svd_ACF_female$u[, 1]) 
+
+                # return
                 return(list(M_male = M_male, M_female = M_female,
                                 ax_male = ax_male, ax_female = ax_female, ax_both = ax_both,
                                 bx_male = bx_male, bx_female = bx_female,
                                 kt_male = kt_male, kt_female = kt_male, 
                                 Bx = Bx, Kt = Kt))
+                                # bx_ACF_male = bx_ACF_male, bx_ACF_female=bx_ACF_female, 
+                                # kt_ACF_male=kt_ACF_male, kt_ACF_female=kt_ACF_female))
 }
 
 ## de-duplicate function to rank and filter series based on different set of criteria (function took from PG)
 deduplicates <- function(myDT) {
+        # myDT <- country_db %>% as.data.table()
      ## Filter out Model-based estimates from IDB and GBD
      ## but keep "model-based estimates" from VR computed for WPP using time interpolation to fill-in data gaps
      myDT <- myDT[(! DataTypeID %in% c(70, 71)) | (DataTypeID %in% c(70) & DataSourceShortName=="WPP")]
@@ -588,14 +656,120 @@ deduplicates <- function(myDT) {
      myDT$MD5 <- NULL
      myDT$nrank1 <- NULL
      myDT$nrank2 <- NULL
-     myDT$nrank3.x <- NULL
-     myDT$nrank3 <- myDT$nrank3.y
-     myDT$nrank3.y <- NULL
-
+     if(!is.null(myDT$nrank3.x)){
+             myDT$nrank3.x <- NULL
+             myDT$nrank3 <- myDT$nrank3.y
+             myDT$nrank3.y <- NULL        
+     }
      return(myDT)
 }
 
-# plot rates with time-age variation
+# download HMD data from UN server only useful indicators for plots
+download_HMD_data <- function(dir){
+        HMD_indicators <- c(
+                250, # Probability of dying 15-60 (45q15)
+                266, # E(x) - abridged
+                229, # Infant mortality (1q0)
+                239  # Under-five mortality (5q0)
+        )
+        HMD_data <- list()
+        j = 1
+        countries_in_HMD <- read.csv(file.path(dir,"countries_HMD.csv")) %>% pull()
+        HMD_countries <- fertestr::locs_avail() %>% 
+                inner_join(tibble(location_code_iso3 = countries_in_HMD))
+        for(i in seq_along(HMD_countries$location_code)){
+                out <- get_recorddata(dataProcessTypeIds = c(6, 7, 9, 10),  
+                                      startYear = 1950,
+                                      endYear = 2020,
+                                      indicatorIds  = HMD_indicators,
+                                      dataSourceShortNames = "HMD",
+                                      dataSourceYears = HMD_Year,
+                                      locIds = as.integer(HMD_countries$location_code[i]),
+                                      locAreaTypeIds = 2,
+                                      subGroupIds = 2) %>% 
+                        as.data.table() %>% deduplicates(.)
+                HMD_data[[j]] = out 
+                print(j)
+                j = j + 1
+        }
+        # bind all
+        HMD_data <- HMD_data %>% bind_rows(.id = "LocName")
+        save(HMD_data, file = file.path(dir,"HMD_data.Rdata"))
+}
+
+# write output in InputFile (PG code)
+write_InputFile <- function(input.file, life_table_age_sex, mySeries){
+        
+        ## general table style for worksheet export/update
+        hs1 <- createStyle(fgFill = "#4F81BD", halign = "CENTER", textDecoration = "Bold", border = "Bottom", fontColour = "white")
+        
+        ## header and column style for highlights
+        editStyleHeader <- createStyle(halign = "CENTER", textDecoration = "Bold", border = "LeftRight", fontColour = "#FF0000", bgFill = "#FFFF00")
+        editStyleColumn <- createStyle(halign = "CENTER", textDecoration = "Bold", border = "LeftRight", fontColour = "#FF0000")
+        editStyleColumnBold <- createStyle(halign = "CENTER", textDecoration = "Bold", border = "LeftRight")
+        
+        ## style for comments
+        s1 <- createStyle(fontSize = 12, fontColour = "red", textDecoration = c("BOLD"))
+        s2 <- createStyle(fontSize = 10, fontColour = "black", textDecoration = c("BOLD"))
+        
+        ## style for formatting decimal values
+        fm0 <- createStyle(numFmt = "0")
+        fm1 <- createStyle(numFmt = "0.0")
+        fm2 <- createStyle(numFmt = "0.00")
+        fm3 <- createStyle(numFmt = "0.000")
+        fm5 <- createStyle(numFmt = "0.00000")
+        
+        # load and write life_table_age_sex
+        wb <- loadWorkbook(input.file)
+        
+        addWorksheet(wb, "life_table_age_sex2")
+        writeDataTable(wb, sheet = "life_table_age_sex2",
+                       x = life_table_age_sex %>% as.data.frame(),
+                       colNames = TRUE, rowNames = FALSE, headerStyle = hs1, tableStyle = "TableStyleLight2", withFilter = FALSE, bandedRows = TRUE)
+        addStyle(wb, "life_table_age_sex2", style = fm5, cols = 7, rows = 2:(nrow(life_table_age_sex)+1), gridExpand = TRUE)
+        setColWidths(wb, "life_table_age_sex2", 1:ncol(life_table_age_sex), widths="auto")
+        freezePane(wb, "life_table_age_sex2", firstRow = TRUE, firstCol = TRUE)
+        removeWorksheet(wb, "life_table_age_sex")
+        renameWorksheet(wb, "life_table_age_sex2", "life_table_age_sex")
+        worksheetOrder(wb) <- c(1:17,24,18:23)
+        
+        # update_status worksheet
+        update_status <- data.table(readWorkbook(xlsxFile = wb, sheet = "update_status"))
+        # convert date columns
+        changeCols <- c("created", "last_update", "last_global_run", "last_country_run", "mig_world_balance")
+        update_status[,(changeCols):= lapply(.SD, as.character), .SDcols = changeCols]   
+        now <- format(Sys.time(), format="%Y-%m-%d %H:%M:%S")
+        update_status[worksheet %in% c("mx5_raw", "lt_abridged", "life_table_age_sex"), last_update := now]
+        ## update_status[worksheet %in% c("mx5_raw", "lt_abridged", "life_table_age_sex"), last_global_run := now]
+        writeData(wb, sheet = "update_status", update_status$last_update, startCol=3, startRow=2, colNames = FALSE, rowNames=FALSE, headerStyle = hs1)
+        ## writeData(wb, sheet = "update_status", update_status$last_global_run, startCol=4, startRow=2, colNames = FALSE, rowNames=FALSE, headerStyle = hs1)
+        setColWidths(wb, "update_status", 1:ncol(update_status), widths="auto") 
+        
+        # dd_selected_series worksheet
+        # note: SeriesID requires integer64 to preserve large numbers with more than 15 digits)
+        # Excel uses a 64-bit floating point representation for numbers entered in cells, which means you can only have 15 digits precision.
+        # the solution is to enter the ID numbers as text.
+        dd_selected_series <- data.table(readWorkbook(xlsxFile = wb, sheet = "dd_selected_series"))
+        ## our LT empirical data
+        myIndicatorID <- unique(mySeries$IndicatorID)
+        
+        if (nrow(dd_selected_series)>0) {
+                dd_selected_series <- dd_selected_series[(!IndicatorID %in% myIndicatorID) & is.na(IndicatorID)==FALSE]
+        }
+        dd_selected_series[, IndicatorID := as.integer(IndicatorID)]
+        dd_selected_series <- rbind(dd_selected_series[is.na(IndicatorID)==FALSE], mySeries, fill=TRUE)
+        dd_selected_series <- dd_selected_series[is.na(Status)==FALSE]
+        removeWorksheet(wb, "dd_selected_series")
+        addWorksheet(wb, sheet = "dd_selected_series")
+        writeDataTable(wb, sheet = "dd_selected_series", x = dd_selected_series, colNames = TRUE, rowNames = FALSE, headerStyle = hs1, tableStyle = "TableStyleLight2", withFilter = FALSE, bandedRows = TRUE)
+        setColWidths(wb, "dd_selected_series", 1:ncol(dd_selected_series), widths="auto")
+        freezePane(wb, "dd_selected_series", firstRow = TRUE, firstCol = TRUE)
+        
+        # save all changes
+        saveWorkbook(wb, input.file, overwrite = T)
+}
+
+# OLD: plot rates with time-age variation
 plot_age_time <- function(data, country = NULL){
         data$Age[data$Age>100] <- 100 
         data$Age_col <- paste0(trunc(data$Age/10)*10,"-",trunc(data$Age/10)*10+10)
@@ -625,7 +799,7 @@ plot_age_time <- function(data, country = NULL){
                 facet_grid(~Sex)
 }
 
-# plot data availability
+# OLD: plot data availability
 plot_data <- function(data, country=NULL){
         data <- data %>% filter(!str_detect(IndicatorName,"a\\(x"))
         data$IndicatorName <- factor(data$IndicatorName)
@@ -643,7 +817,7 @@ plot_data <- function(data, country=NULL){
                 theme(legend.position="bottom")
 }
 
-# plot dispersion measures
+# OLD:  plot dispersion measures
 plot_dispersion <- function(data, country = NULL){
         minim_data <- floor(min(data$Date)/10)*10
         ggplot(data %>% 
@@ -659,7 +833,7 @@ plot_dispersion <- function(data, country = NULL){
                 theme_bw()
 }
 
-# plot sex ratio measures
+# OLD:  plot sex ratio measures
 plot_sex_ratios <- function(data, country = NULL){
         minim_data <- floor(min(data$Date)/10)*10
         ggplot(data %>% 
@@ -674,7 +848,7 @@ plot_sex_ratios <- function(data, country = NULL){
                 theme_bw()
 }
 
-# plot ex with time variation
+# OLD:  plot ex with time variation
 plot_ex_time <- function(data, country = NULL){
         data$Date <- as.numeric(data$Date)
         data$Source <- as.factor(data$Source)

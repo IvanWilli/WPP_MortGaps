@@ -1,0 +1,72 @@
+=========================================================================
+Log Path: C:/Proyectos/WPP_MortGaps/LifeTables/log/158.log
+Working Directory: C:/Proyectos/WPP_MortGaps
+User Name: User
+R Version: 4.0.2 (2020-06-22)
+Machine: DESKTOP-KLE8ANG x86-64
+Operating System: Windows 10 x64 build 19043
+Log Start Time: 2021-08-24 09:04:10
+=========================================================================
+
+Error in lt_abridged(Deaths = Deaths, Exposures = Exposures, nMx = nMx,  : 
+  extrapFrom <= max(Age) is not TRUE
+
+
+NOTE: Log Print Time:  2021-08-24 09:06:09
+NOTE: Elapsed Time in seconds: 1.98377336661021
+
+Error in base::try(E, TRUE) : objeto 'E' no encontrado
+
+
+NOTE: Log Print Time:  2021-08-24 09:13:25
+NOTE: Elapsed Time in seconds: 7.25849533478419
+
+Error in base::try(E, TRUE) : objeto 'E' no encontrado
+
+
+NOTE: Log Print Time:  2021-08-24 09:13:25
+NOTE: Elapsed Time in seconds: 0.00395894050598145
+
+Error in lt_abridged(Deaths = Deaths, Exposures = Exposures, nMx = nMx,  : 
+  extrapFrom <= max(Age) is not TRUE
+
+
+NOTE: Log Print Time:  2021-08-24 09:14:28
+NOTE: Elapsed Time in seconds: 1.05630615154902
+
+Error in lt_id_Ll_S(nLx, lx, Age, AgeInt, N = 5) : 
+  all(nLx >= 0, nLx[Age < 100] > 0, nLx[-n] < (radix * N)) is not TRUE
+
+
+NOTE: Log Print Time:  2021-08-24 09:17:40
+NOTE: Elapsed Time in seconds: 3.19495771725972
+
+Error: '...' usado en un contexto incorrecto
+
+
+NOTE: Log Print Time:  2021-08-24 09:18:37
+NOTE: Elapsed Time in seconds: 56.9466648101807
+
+Error in lt_id_Ll_S(nLx, lx, Age, AgeInt, N = 5) : 
+  all(nLx >= 0, nLx[Age < 100] > 0, nLx[-n] < (radix * N)) is not TRUE
+
+
+NOTE: Log Print Time:  2021-08-24 09:18:44
+NOTE: Elapsed Time in seconds: 6.73463010787964
+
+Error: inesperado ')' in:
+"nLx[-n] < (radix * 
+          N))"
+
+
+NOTE: Log Print Time:  2021-08-24 09:22:47
+NOTE: Elapsed Time in seconds: 4.04889503320058
+
+Error: inesperado ')' in:
+"nLx[-n] < (radix * 
+          N))"
+
+
+NOTE: Log Print Time:  2021-08-24 09:23:16
+NOTE: Elapsed Time in seconds: 29.3720569610596
+
