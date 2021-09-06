@@ -62,16 +62,16 @@ write_plots <- function(dir_plots, output, smoothing = FALSE, dir_HMD){
         print(plot_comparison(name, t_final_data, HMD_data, x = "e0&e60&e80"))
         dev.off()
         svg(file.path(dir_plots,paste0(name_code,"_1q0_XInfant-mortality-Estimates-Time-Trend-comparison.svg")), width=22*.9, height=12*.9)
-        print(plot_comparison(name, t_final_data, HMD_data,x = "1q0"))
+        try(print(plot_comparison(name, t_final_data, HMD_data,x = "1q0")))
         dev.off()
         svg(file.path(dir_plots,paste0(name_code,"_5q0_XUnder-five-mortality-Estimates-Time-Trend-comparison.svg")), width=22*.9, height=12*.9)
-        print(plot_comparison(name, t_final_data, HMD_data,x = "5q0"))
+        try(print(plot_comparison(name, t_final_data, HMD_data,x = "5q0")))
         dev.off()
         svg(file.path(dir_plots,paste0(name_code,"_4q1_XChild-mortality-Estimates-vs-1q0-Time-Trend-comparison.svg")), width=22*.9, height=12*.9)
         print(plot_comparison(name, t_final_data, HMD_data,x = "1q0vs4q1"))
         dev.off()
         svg(file.path(dir_plots,paste0(name_code,"_45q15_XAdult-mortality-Estimates-Time-Trend-comparison.svg")), width=22*.9, height=12*.9)
-        print(plot_comparison(name, t_final_data, HMD_data,x = "45q15"))
+        try(print(plot_comparison(name, t_final_data, HMD_data,x = "45q15")))
         dev.off()
         svg(file.path(dir_plots,paste0(name_code,"_45q15_XAdult-mortality-Estimates-vs-5q0-Time-Trend-comparison.svg")), width=22*.9, height=12*.9)
         print(plot_comparison(name, t_final_data, HMD_data,x = "45q15vs5q0"))
@@ -98,7 +98,7 @@ write_plots <- function(dir_plots, output, smoothing = FALSE, dir_HMD){
         print(plot_trends(name, t_final_data,x="lexis"))
         dev.off()
         svg(file.path(dir_plots,paste0(name_code,"_Mx1_XEstimates-Sex-Ratios-Time-Trend.svg")), width=22*.9, height=12*.9)
-        print(plot_trends(name, t_final_data,x="sex_ratio_time"))
+        try(print(plot_trends(name, t_final_data,x="sex_ratio_time")))
         dev.off()
         svg(file.path(dir_plots,paste0(name_code,"_Mx1_XEstimates-Sex-Ratios-Age-Profiles.svg")), width=22*.9, height=12*.9)
         print(plot_trends(name, t_final_data,x="sex_ratio_age"))
@@ -122,7 +122,7 @@ write_plots <- function(dir_plots, output, smoothing = FALSE, dir_HMD){
         print(plot_trends5(name, country_data5,x="mx5_age"))
         dev.off()
         svg(file.path(dir_plots,paste0(name_code,"_Mx5_XEstimates-Sex-Ratios-Time-Trend.svg")), width=22*.9, height=12*.9)
-        print(plot_trends5(name, country_data5,x="sex_ratio_time5"))
+        try(print(plot_trends5(name, country_data5,x="sex_ratio_time5")))
         dev.off()
         svg(file.path(dir_plots,paste0(name_code,"_Mx5_XEstimates-Sex-Ratios-Age-Profiles.svg")), width=22*.9, height=12*.9)
         print(plot_trends5(name, country_data5,x="sex_ratio_age5"))
@@ -565,8 +565,8 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
                                                         Sex = factor(Sex, levels=c("m","f"), labels = c("Male","Female")))) %>% 
                                 mutate(Smooth = as.factor(Smooth))
                 
-                selected_smoothing = ifelse(as.logical(smoothing) | smoothing == "MortalitySmooth", "MortalitySmooth", 
-                                            ifelse(smoothing == "StMoMo-APC", "StMoMo-APC", "Not Smoothed")) 
+                selected_smoothing = ifelse(as.logical(smoothing) | smoothing == "APC","APC", 
+                                            ifelse(smoothing == "AP", "AP", "Not Smoothed")) 
                 
                 gg <- ggplot(data = country_data_compare %>% filter(Age%in%c(0,60,80)),
                        aes(x=Date,y=ex)) + 
@@ -579,8 +579,8 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
                         scale_colour_viridis_d()+
                         theme(legend.position="bottom")+
                         facet_grid(Age~Sex, scales = "free_y", space = "free",switch = "x")+
-                        ggtitle(paste0("Smoothed/Not Smoothed life expectancy (previous to mortality crisis adjustments). ",name),
-                                subtitle = paste0("Selected: ", selected_smoothing)) +
+                        ggtitle(paste0("Smoothed/Not Smoothed life expectancy. ",name),
+                                subtitle = paste0("Selected: ", selected_smoothing," (excluding mortality crises)")) +
                         personal_theme +
                         theme(plot.subtitle = element_text(color = "red"))
         }
@@ -591,8 +591,8 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
                                                        Sex = factor(Sex, levels=c("m","f"), labels = c("Male","Female")))) %>% 
                         mutate(Smooth = as.factor(Smooth))
                 
-                selected_smoothing = ifelse(as.logical(smoothing) | smoothing == "MortalitySmooth","MortalitySmooth", 
-                                            ifelse(smoothing == "StMoMo-APC", "StMoMo-APC", "Not Smoothed")) 
+                selected_smoothing = ifelse(as.logical(smoothing) | smoothing == "APC","APC", 
+                                            ifelse(smoothing == "AP", "AP", "Not Smoothed")) 
                 
                 my_breaks = 10^seq(0,-7,by = -.5)
                 gg <- country_data_compare %>% 
@@ -611,8 +611,8 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
                         scale_x_continuous(breaks = seq(1950,2020,20), 
                                            labels = seq(1950,2020,20))+
                         facet_grid(rows=vars(Sex),cols=vars(Smooth))+
-                        ggtitle(paste0("Smoothed/Not Smoothed Lexis surface of mortality rates (previous to mortality crisis adjustments). ",name),
-                                subtitle = paste0("Selected: ",selected_smoothing)) +
+                        ggtitle(paste0("Smoothed/Not Smoothed Lexis surface of mortality rates. ",name),
+                                subtitle = paste0("Selected: ", selected_smoothing," (excluding mortality crises)")) +
                         theme(plot.subtitle = element_text(color = "red")) +
                         personal_theme 
         }
@@ -627,8 +627,8 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
                                label = ifelse(Age %in% c(0,5,10,15,20,30,40,50,60,70,80,90,100) & Date == 1950.5, Age,""),
                                Age = as.factor(Age))
                 
-                selected_smoothing = ifelse(as.logical(smoothing) | smoothing == "MortalitySmooth","MortalitySmooth", 
-                                            ifelse(smoothing == "StMoMo-APC", "StMoMo-APC", "Not Smoothed")) 
+                selected_smoothing = ifelse(as.logical(smoothing) | smoothing == "APC","APC", 
+                                            ifelse(smoothing == "AP", "AP", "Not Smoothed")) 
                 
                 gg <- ggplot(data = country_data_compare,
                              aes(x=Date,y=nMx,
@@ -647,7 +647,7 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
                                            labels = seq(1950,2020,10))+
                         facet_grid(rows=vars(Sex),cols=vars(Smooth))+
                         ggtitle(paste0("Time trend of mortality rates by age. ",name),
-                                subtitle = paste0("Selected: ",selected_smoothing)) +
+                                subtitle = paste0("Selected: ", selected_smoothing," (excluding mortality crises)")) +
                         theme(plot.subtitle = element_text(color = "red")) + 
                         personal_theme
         }

@@ -1,5 +1,5 @@
 # author: IW
-# function call from `main.R`. Read arguments from InputFiles, download/use the country data from server,
+# function called from `main.R`. Read arguments from InputFiles, download/use the country data from server,
 # build the time series, write InputFiles and make the plots.
 
 fill_gaps <- function(country = NULL, 
@@ -31,12 +31,14 @@ fill_gaps <- function(country = NULL,
         }else{
                 indicators_lt <- indicators_lt_complete
         }
-        if(file.exists(file.path(dirs$global_dir, paste0(country$Name,".csv")))){
-                country_db <- read.csv(file.path(dirs$global_dir, paste0(country$Name,".csv"))) %>% 
+        
+        if(file.exists(file.path(dirs$aux_dir, paste0(country$Name,".csv")))){
+                country_db <- read.csv(file.path(dirs$aux_dir, paste0(country$Name,".csv"))) %>% 
                         filter(IndicatorID %in% indicators_lt)
                 
         }else{
-                country_db <- get_recorddata(dataProcessTypeIds = c(6, 7, 9, 10), # 6=Estimate; 7=Life Table (legacy UN DYB) ; 9=Register ; 10=Sample Registration System (SRS);                                              startYear = 1950,
+                country_db <- get_recorddata(
+                                        dataProcessTypeIds = c(6, 7, 9, 10), # 6=Estimate; 7=Life Table (legacy UN DYB) ; 9=Register ; 10=Sample Registration System (SRS);                                              startYear = 1950,
                                              endYear = 2020,
                                              indicatorIds = indicators_lt,
                                              locIds = as.integer(country$PK_LocID),
@@ -44,11 +46,13 @@ fill_gaps <- function(country = NULL,
                                              subGroupIds = 2,
                                              includeUncertainty = FALSE,
                                              collapse_id_name = FALSE)  
-                write.csv(country_db, file.path(dirs$global_dir, paste0(country$Name,".csv")), row.names = F)
+                write.csv(country_db, file.path(dirs$aux_dir, paste0(country$Name,".csv")), row.names = F)
         }
-                
-        # buil lt series: using empirical data or modelled
+        
+        # build lt series: using empirical data
         if(mort_params$Age_Specific_Mortality_Type == "Empirical"){
+                
+                # results
                 output <- fill_gaps_lt(country_db,
                                           country, 
                                           dates_out,
@@ -58,24 +62,26 @@ fill_gaps <- function(country = NULL,
                                           mort_crises,
                                           first_year,
                                           last_year)
+                
+                # write InputFile with results
+                write_InputFile(input.file = dirs$InputFiles_dir, 
+                                life_table_age_sex = output$life_table_age_sex,
+                                mySeries = output$dd_selected_series)
+                
+                # do plots with results
+                write_plots(dir_plots = dirs$plots_dir, 
+                            output = output, 
+                            smoothing = mort_params$Empirical_LT_smoothing,
+                            dir_HMD = dirs$aux_dir)
+                
+                # save list of data results
+                save(output, file = file.path(dirs$aux_dir,paste0(country$Code_iso, "_output.Rdata")))
+                
         }else{
-                stop("Not developed yet")
+                log_print("Modelled LT. Not here.")
+                print("Modelled LT. Not here.")
                 
         }
-        
-        # write InputFile with results
-        write_InputFile(input.file = dirs$InputFiles_dir, 
-                        life_table_age_sex = output$life_table_age_sex,
-                        mySeries = output$dd_selected_series)
-        
-        # do plots with results
-        write_plots(dir_plots = dirs$plots_dir, 
-                    output = output, 
-                    smoothing = mort_params$Empirical_LT_smoothing,
-                    dir_HMD = dirs$global_dir)
-        
-        # save list of data results
-        save(output, file = file.path(dirs$global_dir,paste0(country$Code_iso, "_output.Rdata")))
         
         # end: no output
 }

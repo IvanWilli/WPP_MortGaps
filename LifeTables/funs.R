@@ -20,7 +20,8 @@ add_wpp19_1950data <- function(country, country_data){
                 mutate(TimeLabel = "1950-1955", TimeMid = Year, DataSourceShortName = "WPP19") %>%
                 pivot_longer(cols = mx:lx, names_to = "IndicatorName", values_to = "DataValue") %>% 
                 mutate(IndicatorName = ifelse(IndicatorName=="lx", "l(x) - abridged", "m(x,n) - abridged"),
-                       DataReliabilitySort = NA) %>% 
+                       DataReliabilitySort = NA,
+                       DataTypeSort=1000) %>% 
                 rename(SexName=Sex) %>% 
                 select(-LocID, -Year)
         out <- country_data %>% bind_rows(wpp19_lt)
@@ -39,6 +40,7 @@ is_data_valid <- function(country_data, pop){
                 split(list(.$IndicatorName, .$DataSourceShortName, 
                            .$SexName, .$TimeLabel, .$DataTypeSort), drop = T) %>% 
                 lapply(function(X){
+                        # X <- country_data %>% filter(TimeMid==2000.5, DataSourceShortName=="WHR 2002", SexName=="f")
                         validated <- coherence <- "not LT"
                         abr_ages <- c(0,1,seq(5,60,5)) 
                         # is a lifetable first, then wich one
@@ -97,12 +99,14 @@ impute_data <- function(data, pop, k = 3, epsilon = NULL){
                 epsilon <- data %>% 
                         filter(is_m_or_l(IndicatorName)=="m", DataValue>0) %>% 
                         summarise(min(DataValue)/2) %>% pull()
+                epsilon <- min(epsilon, 1e-6)
         }
         data <- data %>% 
                 split(list(.$DataSourceShortName,.$TimeLabel,.$IndicatorName,
                            .$DataTypeSort,.$SexName), drop=T) %>% 
                   lapply(function(X){
-                        # if(unique(X$TimeMid)==1990.5 & unique(X$SexName=="f")){browser()}
+                        # if(unique(X$TimeMid)==1951.5 & unique(X$SexName=="f")){browser()}
+                        # X <- country_data_validation %>% filter(TimeMid==1951.5,SexName=="f", IndicatorName=="l(x) - abridged")
                         out <- X
                         if(!unique(X$validation) %in% c("not LT","error")){
                                 if(is_m_or_l(unique(X$IndicatorName))=="m" & any(X$DataValue<=0)){
@@ -161,10 +165,11 @@ impute_data <- function(data, pop, k = 3, epsilon = NULL){
         data$ID <- 1:nrow(data)
         # detect 0-5 cases on mx (not lx)
         data_to_agr <- data %>% 
-                filter(is_m_or_l(IndicatorName)=="m", 
-                       (AgeStart == 2 | AgeStart == 3 | AgeStart == 4), 
+                filter(is_m_or_l(IndicatorName)=="m",
                        validation == "abridged") %>%
-                mutate(to_agr = 1) %>% 
+                group_by(DataSourceShortName,TimeLabel,IndicatorName,SexName,DataTypeSort) %>% 
+                mutate(to_agr = ifelse(2 %in% AgeStart & 3 %in% AgeStart & 4 %in% AgeStart, 1, 0)) %>% 
+                ungroup() %>% 
                 distinct(DataSourceShortName,TimeLabel,IndicatorName,SexName,DataTypeSort,to_agr) %>% 
                 inner_join(data,by=c("DataSourceShortName","TimeLabel","IndicatorName","SexName","DataTypeSort")) %>% 
                 filter(to_agr==1) %>% 
@@ -183,6 +188,15 @@ impute_data <- function(data, pop, k = 3, epsilon = NULL){
         }else{
                 data_output <- data 
         }
+        
+        # set as error if has 2 or 3 or 4 only. Will use lx instead
+        data_output <- data_output %>%
+                group_by(DataSourceShortName,TimeLabel,IndicatorName,SexName,DataTypeSort) %>% 
+                mutate(validation = ifelse(is_m_or_l(IndicatorName)=="m" &
+                                           validation=="abridged" & 
+                                           validation!="grouped" &
+                                           any(2:4 %in% AgeStart),"error", validation)) %>% 
+                ungroup()
         
         # output
         return(data_output %>% select(-ID))
@@ -239,9 +253,13 @@ split_abr_0_5 <- function(X, pop){
 select_data <- function(country_data){
         
         # herarchy structure
+        sources_available <- tibble(DataSourceShortName=unique(country_data$DataSourceShortName))
         source_herarchy <- tibble(DataSourceShortName = c("HMD","EuroStat","VR(WPP)","WHO DB",
                                                          "HLD 2020","DYB","GBD 2016","WPP19"),
                                   Index = 1:8)
+        source_herarchy_available <- left_join(sources_available,source_herarchy, by="DataSourceShortName") %>% 
+                arrange(Index, desc(DataSourceShortName))
+        source_herarchy_available$Index <- 1:nrow(source_herarchy_available)
         
         # select by floor dates
         country_data$TimeMid_floor <- floor(country_data$TimeMid) 
@@ -259,7 +277,7 @@ select_data <- function(country_data){
         
         # selection: turno to map when it is final
         for(year in time_data){
-                # if(year == 1950)browser()
+                # if(year == 2017)browser()
                 selection_y <- country_data %>%
                         filter(TimeMid_floor == year, validation!="not LT") %>%
                         group_by(DataSourceShortName, TimeMid_floor, TimeMid, TimeLabel, 
@@ -269,12 +287,13 @@ select_data <- function(country_data){
                         mutate(is_avg_years = ifelse(substr(TimeLabel,6,9)=="",0,
                                                      as.integer(substr(TimeLabel,6,9))-
                                                      as.integer(substr(TimeLabel,1,4)))) %>% 
-                        left_join(source_herarchy,by = "DataSourceShortName") %>%
+                        left_join(source_herarchy_available,by = "DataSourceShortName") %>%
                         left_join(lonely_points,by = c("DataSourceShortName","TimeMid_floor")) %>%
                         ungroup() %>% 
                         arrange(Lonely, # not lonely points
                                 Index, # herarchy
-                                nrank3, DataTypeSort, # this take care of HLD options
+                                nrank3, # an country-specific or LAMBDA should be selected, even not included in Index
+                                DataTypeSort, # this take care of HLD options
                                 desc(complete), # firs complete
                                 desc(IndicatorName), # first mx
                                 is_avg_years) # first not avg years adta
@@ -294,7 +313,7 @@ select_data <- function(country_data){
         }
         
         # decide between sources in casethere is some overlapping years
-        desoverl <- desoverlap(option, country_data)
+        desoverl <- desoverlap(option, country_data, source_herarchy_available)
         
         # final selection
         final <- selection %>% 
@@ -310,21 +329,30 @@ select_data <- function(country_data){
                 ungroup() %>% 
                 arrange(TimeMid)
         
-        # remove lonelys just next to serie
-        final <- final %>% filter(!(Lonely==1 & (TimeMid-lead(TimeMid))==-1))
+        # remove lonelys just next to serie in case are not all disperse HLD
+        if(!all(final$DataSourceShortName=="HLD 2020")){
+                final <- final %>% 
+                        mutate(Dif = TimeMid-lead(TimeMid),
+                               Dif = ifelse(is.na(Dif),-10,Dif)) %>% 
+                        filter(!(Lonely==1 & Dif==-1))
+        }
         
         # return
         return(final)
 }
 
 # decide on overlapping periods
-desoverlap <- function(option, country_data, treshold = .02, ...){
+desoverlap <- function(option, country_data, source_herarchy, treshold = .02, ...){
         
         # detect overlaps
         overl <- option %>%
                 group_by(TimeMid_floor) %>% mutate(id = row_number()) %>% 
-                pivot_wider(names_from=id,values_from=DataSourceShortName) %>% 
-                rename(ds1=2, ds2=3) %>% 
+                pivot_wider(names_from=id,values_from=DataSourceShortName)
+        # some countries have only one source for each available year (Haiti)
+        if(ncol(overl)==2){
+                overl$`2` <- NA
+        }
+        overl <- overl %>% rename(ds1=2, ds2=3) %>% 
                 arrange(TimeMid_floor) %>% 
                 mutate(overlap = ifelse(!is.na(ds1)&!is.na(ds2),1,0)
                        # dif = ifelse(ds1!=lead(ds1) & ds2!=lead(ds2),1,0)
@@ -344,11 +372,6 @@ desoverlap <- function(option, country_data, treshold = .02, ...){
                 }
         }
         overl$groups <- group
-
-        # herarchy structure (again)
-        source_herarchy <- tibble(DataSourceShortName = c("HMD","EuroStat","VR(WPP)","WHO DB",
-                                                          "HLD 2020","DYB","GBD 2016","WPP19"),
-                                  Index = 1:8)
         
         # set final ds for each
         desoverl <- overl %>% 
@@ -700,7 +723,6 @@ download_HMD_data <- function(dir){
 # write output in InputFile (PG code)
 write_InputFile <- function(input.file, life_table_age_sex, mySeries){
         
-        ## general table style for worksheet export/update
         hs1 <- createStyle(fgFill = "#4F81BD", halign = "CENTER", textDecoration = "Bold", border = "Bottom", fontColour = "white")
         
         ## header and column style for highlights
@@ -720,18 +742,26 @@ write_InputFile <- function(input.file, life_table_age_sex, mySeries){
         fm5 <- createStyle(numFmt = "0.00000")
         
         # load and write life_table_age_sex
-        wb <- loadWorkbook(input.file)
+        wb <- loadWorkbook(file = input.file)
         
-        addWorksheet(wb, "life_table_age_sex2")
-        writeDataTable(wb, sheet = "life_table_age_sex2",
-                       x = life_table_age_sex %>% as.data.frame(),
-                       colNames = TRUE, rowNames = FALSE, headerStyle = hs1, tableStyle = "TableStyleLight2", withFilter = FALSE, bandedRows = TRUE)
-        addStyle(wb, "life_table_age_sex2", style = fm5, cols = 7, rows = 2:(nrow(life_table_age_sex)+1), gridExpand = TRUE)
-        setColWidths(wb, "life_table_age_sex2", 1:ncol(life_table_age_sex), widths="auto")
-        freezePane(wb, "life_table_age_sex2", firstRow = TRUE, firstCol = TRUE)
-        removeWorksheet(wb, "life_table_age_sex")
-        renameWorksheet(wb, "life_table_age_sex2", "life_table_age_sex")
-        worksheetOrder(wb) <- c(1:17,24,18:23)
+        ## addWorksheet(wb, "life_table_age_sex2")
+        ## writeDataTable(wb, sheet = "life_table_age_sex2",
+        ##                x = life_table_age_sex %>% as.data.frame(),
+        ##                colNames = TRUE, rowNames = FALSE, headerStyle = hs1, tableStyle = "TableStyleLight2", withFilter = FALSE, bandedRows = TRUE)
+        ## addStyle(wb, "life_table_age_sex2", style = fm5, cols = 7, rows = 2:(nrow(life_table_age_sex)+1), gridExpand = TRUE)
+        ## setColWidths(wb, "life_table_age_sex2", 1:ncol(life_table_age_sex), widths="auto")
+        ## freezePane(wb, "life_table_age_sex2", firstRow = TRUE, firstCol = TRUE)
+        ## removeWorksheet(wb, "life_table_age_sex")
+        ## renameWorksheet(wb, "life_table_age_sex2", "life_table_age_sex")
+        ## worksheetOrder(wb) <- c(1:17,24,18:23)
+        
+        # for testing only
+        # life_table_age_sex <- readWorkbook(xlsxFile = wb, sheet = "life_table_age_sex")
+        # replace values with 1 to test if the export works
+        # life_table_age_sex$value <- 1
+        
+        openxlsx::deleteData(wb, sheet = "life_table_age_sex", cols = 1:ncol(life_table_age_sex), rows = 2:(nrow(life_table_age_sex)+1), gridExpand = TRUE)
+        openxlsx::writeData(wb, sheet = "life_table_age_sex", x = life_table_age_sex, startCol = 1, startRow = 2, colNames = FALSE)
         
         # update_status worksheet
         update_status <- data.table(readWorkbook(xlsxFile = wb, sheet = "update_status"))
@@ -759,14 +789,18 @@ write_InputFile <- function(input.file, life_table_age_sex, mySeries){
         dd_selected_series[, IndicatorID := as.integer(IndicatorID)]
         dd_selected_series <- rbind(dd_selected_series[is.na(IndicatorID)==FALSE], mySeries, fill=TRUE)
         dd_selected_series <- dd_selected_series[is.na(Status)==FALSE]
-        removeWorksheet(wb, "dd_selected_series")
-        addWorksheet(wb, sheet = "dd_selected_series")
-        writeDataTable(wb, sheet = "dd_selected_series", x = dd_selected_series, colNames = TRUE, rowNames = FALSE, headerStyle = hs1, tableStyle = "TableStyleLight2", withFilter = FALSE, bandedRows = TRUE)
+        
+        ## removeWorksheet(wb, "dd_selected_series")
+        ## addWorksheet(wb, sheet = "dd_selected_series")
+        ## writeDataTable(wb, sheet = "dd_selected_series", x = dd_selected_series, colNames = TRUE, rowNames = FALSE, headerStyle = hs1, tableStyle = "TableStyleLight2", withFilter = FALSE, bandedRows = TRUE)
+        
+        openxlsx::deleteData(wb, sheet = "dd_selected_series", cols = 1:ncol(dd_selected_series), rows = 2:(nrow(dd_selected_series)+1), gridExpand = TRUE)
+        openxlsx::writeData(wb, sheet = "dd_selected_series", x = dd_selected_series, startCol = 1, startRow = 2, colNames = FALSE)
         setColWidths(wb, "dd_selected_series", 1:ncol(dd_selected_series), widths="auto")
         freezePane(wb, "dd_selected_series", firstRow = TRUE, firstCol = TRUE)
         
         # save all changes
-        saveWorkbook(wb, input.file, overwrite = T)
+        saveWorkbook(wb, file = input.file, overwrite = T)
 }
 
 # OLD: plot rates with time-age variation
