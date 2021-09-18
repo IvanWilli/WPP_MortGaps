@@ -1,6 +1,186 @@
 # author: IW
 # set of functions used in `fill_gaps.R` and `fill_gaps_lt.R`.
 
+# fill interval gaps
+fill_intervals_gaps <- function(intervals_gaps, main_data_time, 
+                                lt_data, first_year, last_year,
+                                Empirical_LT_LeeCarter_time_window_fit_Limited_LC,
+                                Empirical_LT_LeeCarter_time_window_fit_LC,
+                                Empirical_LT_LeeCarter_non_divergent,
+                                Empirical_LT_LeeCarter_jump_off,
+                                Empirical_LT_LeeCarter_fit_e0,
+                                Single){
+        
+        # take structure from lt_data
+        gap_middle_data <- gap_before_data <- gap_after_data <- lt_data %>% filter(Age==-1)
+        
+        # decide for different kind of gaps
+        for(gap in intervals_gaps){
+                # gap in the left or all
+                if((first_year+.5) %in% gap | all(c(first_year,last_year)+.5) %in% gap){
+                        # if we have some lonely data point to pivot 
+                        if(any(unique(lt_data$Date)<max(gap))){
+                                window <- min(lt_data$Date[lt_data$Type=="main"])+Empirical_LT_LeeCarter_time_window_fit_Limited_LC
+                                LClim_data <- lt_data %>% 
+                                        filter(Date >= 1940, Date <= window) %>% 
+                                        arrange(Date,Age) 
+                                # if fit e0 for kt parameter
+                                if(!Empirical_LT_LeeCarter_fit_e0){
+                                        gap_before_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap),
+                                                                         Single = Single, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat
+                                }else{
+                                        # takes last observed and interval not main source points
+                                        dates_e0 <- lt_data %>% filter(Date<=min(LClim_data$Date[LClim_data$Type=="main"]), Age==0) %>% 
+                                                select(Date) %>% unique() %>% pull()
+                                        e0_Males <- lt_data %>% filter(Date<=min(LClim_data$Date[LClim_data$Type=="main"]), Age==0, Sex == "m") %>% 
+                                                select(ex) %>% pull()
+                                        e0_Females <- lt_data %>% filter(Date<=min(LClim_data$Date[LClim_data$Type=="main"]), Age==0, Sex == "f") %>% 
+                                                select(ex) %>% pull()
+                                        gap_before_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
+                                                                         dates_e0 = dates_e0, e0_Males = e0_Males, e0_Females = e0_Females,
+                                                                         Single = Single, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat
+                                }
+                                gap_before_data <- gap_before_data %>% mutate(Type = "LC-Lim", Source = "LC-Lim")
+                        }else{
+                                # apply usual LC for extrapolating to 1950
+                                window <- Empirical_LT_LeeCarter_time_window_fit_LC
+                                LC_data <- lt_data %>% 
+                                        filter(Date <= (max(gap)+window))
+                                gap_before_data <- lc(input = LC_data, dates_out = gap, 
+                                                      jump_off = Empirical_LT_LeeCarter_jump_off, 
+                                                      prev_cross_over = Empirical_LT_LeeCarter_non_divergent,
+                                                      LC_fit_e0 = Empirical_LT_LeeCarter_fit_e0) %>% 
+                                        split(list(.$Date, .$Sex)) %>% 
+                                        lapply(function(X){
+                                                LT <- lt_single_mx(nMx = X$nMx,
+                                                                   Age = X$Age,
+                                                                   Sex = unique(X$Sex))
+                                                LT$Sex <- unique(X$Sex)
+                                                LT$Date <- as.numeric(unique(X$Date))
+                                                LT
+                                        }) %>% 
+                                        do.call(rbind,.) 
+                                gap_before_data <- gap_before_data %>% mutate(Type = "LC", Source = "LC")
+                        }
+                }
+                # gap in the right
+                if(2020.5 %in% gap & !all((c(first_year,last_year)+.5) %in% gap)){
+                        # apply usual LC
+                        window <- Empirical_LT_LeeCarter_time_window_fit_LC
+                        LC_data <- lt_data %>% filter(Date >= (min(gap)-window))
+                        if(length(unique(LC_data$Date))==2){
+                                LClim_data <- LC_data
+                                other_dates <- unique(lt_data$Date[!lt_data$Date %in% unique(LClim_data$Date)])
+                                dist_to_include <- abs(other_dates-mean(unique(LClim_data$Date)))
+                                other_date_to_include <- other_dates[dist_to_include==min(dist_to_include)][1]
+                                LClim_data <- bind_rows(LClim_data,
+                                                        lt_data %>% filter(Date == other_date_to_include))%>% 
+                                        arrange(Date,Age)
+                                if(!Empirical_LT_LeeCarter_fit_e0){
+                                        gap_middle_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap),
+                                                                         Single = Single, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat
+                                }else{
+                                        dates_e0 <- LClim_data %>% filter(Type!="main" | Date %in% c(min(gap)-1,max(gap)+1), Age==0) %>% 
+                                                select(Date) %>% unique() %>% pull()
+                                        e0_Males <- LClim_data %>% filter(Type!="main" | Date %in% c(min(gap)-1,max(gap)+1), Age==0, Sex=="m") %>% 
+                                                select(ex) %>% pull()
+                                        e0_Females <- LClim_data %>% filter(Type!="main" | Date %in% c(min(gap)-1,max(gap)+1), Age==0, Sex=="f") %>% 
+                                                select(ex) %>% pull()
+                                        gap_after_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
+                                                                        dates_e0 = dates_e0, e0_Males = e0_Males, e0_Females = e0_Females,
+                                                                        Single = Single, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat %>% 
+                                                mutate(Type = "LC-Lim", Source = "LC-Lim")
+                                }
+                        }
+                        if(length(unique(LC_data$Date)) %in% 3:5){
+                                LClim_data <- LC_data
+                                if(!Empirical_LT_LeeCarter_fit_e0){
+                                        gap_before_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap),
+                                                                         Single = Single, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat
+                                }else{
+                                        # takes last observed and interval not main source points
+                                        dates_e0 <- lt_data %>% filter(Date<=min(LClim_data$Date[LClim_data$Type=="main"]), Age==0) %>% 
+                                                select(Date) %>% unique() %>% pull()
+                                        e0_Males <- lt_data %>% filter(Date<=min(LClim_data$Date[LClim_data$Type=="main"]), Age==0, Sex == "m") %>% 
+                                                select(ex) %>% pull()
+                                        e0_Females <- lt_data %>% filter(Date<=min(LClim_data$Date[LClim_data$Type=="main"]), Age==0, Sex == "f") %>% 
+                                                select(ex) %>% pull()
+                                        gap_after_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
+                                                                        dates_e0 = dates_e0, e0_Males = e0_Males, e0_Females = e0_Females,
+                                                                        Single = Single, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat %>% 
+                                                mutate(Type = "LC-Lim", Source = "LC-Lim")
+                                }
+                        }
+                        if(length(unique(LC_data$Date))>5){
+                                gap_after_data <- lc(input = LC_data, dates_out = gap, 
+                                                     jump_off = Empirical_LT_LeeCarter_jump_off,
+                                                     prev_cross_over = Empirical_LT_LeeCarter_non_divergent,
+                                                     LC_fit_e0 = Empirical_LT_LeeCarter_fit_e0) %>% 
+                                        split(list(.$Date, .$Sex), drop = TRUE) %>% 
+                                        lapply(function(X){
+                                                LT <- lt_single_mx(nMx = X$nMx,
+                                                                   Age = X$Age,
+                                                                   Sex = unique(X$Sex))
+                                                LT$Sex <- unique(X$Sex)
+                                                LT$Date <- as.numeric(unique(X$Date))
+                                                LT
+                                        }) %>% 
+                                        do.call(rbind,.)  %>% mutate(Type = "LC", Source = "LC") 
+                        }
+                }
+                # central gaps
+                if(!any((c(first_year,last_year)+.5) %in% gap)){
+                        window <- Empirical_LT_LeeCarter_time_window_fit_Limited_LC
+                        LClim_data <- lt_data %>% 
+                                filter(Date >= min(gap)-window, 
+                                       Date <= max(gap)+window) %>% 
+                                arrange(Date,Age) 
+                        # sparse data can only take two point. LCLim needs three
+                        if(length(unique(LClim_data$Date))==2){
+                                other_dates <- unique(lt_data$Date[!lt_data$Date%in%unique(LClim_data$Date)])
+                                dist_to_include <- abs(other_dates-mean(unique(LClim_data$Date)))
+                                other_date_to_include <- other_dates[dist_to_include==min(dist_to_include)][1]
+                                LClim_data <- bind_rows(LClim_data,
+                                                        lt_data %>% filter(Date == other_date_to_include))%>% 
+                                        arrange(Date,Age) 
+                        }
+                        # if fit e0
+                        if(!Empirical_LT_LeeCarter_fit_e0){
+                                gap_middle_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap),
+                                                                 Single = Single, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat
+                        }else{
+                                dates_e0 <- LClim_data %>% filter(Type!="main" | Date %in% c(min(gap)-1,max(gap)+1), Age==0) %>% 
+                                        select(Date) %>% unique() %>% pull()
+                                e0_Males <- LClim_data %>% filter(Type!="main" | Date %in% c(min(gap)-1,max(gap)+1), Age==0, Sex=="m") %>% 
+                                        select(ex) %>% pull()
+                                e0_Females <- LClim_data %>% filter(Type!="main" | Date %in% c(min(gap)-1,max(gap)+1), Age==0, Sex=="f") %>% 
+                                        select(ex) %>% pull()
+                                gap_middle_data_i <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
+                                                                   dates_e0 = dates_e0, e0_Males = e0_Males, e0_Females = e0_Females,
+                                                                   Single = Single, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat
+                        } 
+                        gap_middle_data <- bind_rows(gap_middle_data,gap_middle_data_i)
+                }
+        }
+
+        # final data recovering inputs from LC-Lim
+        final_data <- bind_rows(lt_data %>% 
+                                        filter(Type == ifelse(is.null(main_data_time),"add","main"), 
+                                               Date>=first_year),
+                                gap_before_data,
+                                gap_middle_data %>% mutate(Type = "LC-Lim", Source = "LC-Lim"),
+                                gap_after_data) %>% 
+                left_join(lt_data %>% filter(Type=="add") %>% 
+                                  distinct(Date,Source) %>% rename(Source2=Source),
+                          by = "Date") %>%
+                mutate(Source = ifelse(!is.na(Source2),Source2,Source)) %>% 
+                select(-Source2, -Type) %>% 
+                filter(Source!="WPP19")
+        # plot_ex_time(final_data,country = "pepe")
+        
+        return(final_data)
+}
+
 # get id, shor name or compelte name of countries. `fertestr` is used
 get_ID_Name <- function(x){
         wpp_locs <- fertestr::locs_avail()
@@ -50,8 +230,8 @@ is_data_valid <- function(country_data, pop){
                                 AgeInt <- X$AgeSpan
                                 AgeInt[AgeInt<1] <- NA
                                 pop_total <- pop %>% 
-                                                filter(MidPeriod==unique(X$TimeMid)) %>% 
-                                                summarise(sum(PopTotal)) %>% pull() * 1000
+                                                filter(Year==unique(X$TimeMid)) %>% 
+                                                summarise(sum(m+f)) %>% pull() * 1000
                                 # is coherent
                                 coherence <- suppressMessages(is_age_coherent(Age, AgeInt))
                                 # is single
@@ -92,31 +272,38 @@ is_data_valid <- function(country_data, pop){
         # fill/smooth zeroes ages, 
         # split an abridged lt with initial group 0-5
         # group into 1-5 in case and abr lt is split by simple age on those ages 
-impute_data <- function(data, pop, k = 3, epsilon = NULL){
+impute_data <- function(data, pop, epsilon = NULL){
 
         # remove zeros
         if(is.null(epsilon)){
-                epsilon <- data %>% 
+                epsilon_age <- data %>% 
                         filter(is_m_or_l(IndicatorName)=="m", DataValue>0) %>% 
-                        summarise(min(DataValue)/2) %>% pull()
-                epsilon <- min(epsilon, 1e-6)
+                        group_by(AgeStart, SexName) %>% 
+                        summarise(epsilon= min(min(DataValue)/2, 1e-6))
+                # epsilon <- data %>% 
+                #         filter(is_m_or_l(IndicatorName)=="m", DataValue>0) %>% 
+                #         summarise(min(DataValue)/2) %>% pull()
+                # epsilon <- min(epsilon, 1e-6)
         }
         data <- data %>% 
                 split(list(.$DataSourceShortName,.$TimeLabel,.$IndicatorName,
                            .$DataTypeSort,.$SexName), drop=T) %>% 
                   lapply(function(X){
                         # if(unique(X$TimeMid)==1951.5 & unique(X$SexName=="f")){browser()}
-                        # X <- country_data_validation %>% filter(TimeMid==1951.5,SexName=="f", IndicatorName=="l(x) - abridged")
+                        # X <- data %>% filter(TimeMid==2010.5,SexName=="f", IndicatorName=="m(x,n) - abridged", DataSourceShortName=="VR(WPP)")
                         out <- X
                         if(!unique(X$validation) %in% c("not LT","error")){
                                 if(is_m_or_l(unique(X$IndicatorName))=="m" & any(X$DataValue<=0)){
-                                        # browser()
-                                        out <- out %>% mutate(has_zero = ifelse(DataValue==0,1,0),
-                                                      DataValue = ifelse(has_zero==1, DataValue+epsilon, DataValue),
-                                                      DataAverage = zoo::rollmean(DataValue, k = k, fill = NA),
-                                                      DataValue = ifelse(has_zero==1,DataAverage,DataValue),
-                                                      validation = "rm_0s") %>% 
-                                                select(-has_zero,-DataAverage)
+                                        # gives
+                                        out <- out %>% left_join(epsilon_age, by=c("AgeStart","SexName")) %>% 
+                                                        mutate(has_zero = ifelse(DataValue<=0,1,0),
+                                                        DataValue = ifelse(has_zero==1, epsilon, DataValue),
+                                                        # DataAverage = slide(DataValue, mean, .before = 1, .after = 1) %>% unlist(),
+                                                        # DataValue = ifelse(has_zero==1,DataAverage,DataValue),
+                                                        validation = "rm_0s") %>% 
+                                                select(-has_zero, -epsilon
+                                                       # ,-DataAverage
+                                                       )
                                 } 
                                 if(is_m_or_l(unique(X$IndicatorName))=="l" & any(diff(X$DataValue)>=0)){
                                         # browser()
@@ -198,8 +385,32 @@ impute_data <- function(data, pop, k = 3, epsilon = NULL){
                                            any(2:4 %in% AgeStart),"error", validation)) %>% 
                 ungroup()
         
+        
+        data_output <- data_output %>% select(-ID) %>% 
+                split(list(.$TimeMid, .$TimeLabel, .$SexName, .$DataTypeSort, .$IndicatorName), drop = T) %>% 
+                lapply(function(X){
+                        Indicator_type = ifelse(str_detect(unique(X$IndicatorName),"m\\(x,n"),"mx",
+                                                ifelse(str_detect(unique(X$IndicatorName),"l\\(x"),"lx",NA))
+                        Y <- X
+                        # just keep abr ages in case
+                        if(Indicator_type=="lx" & unique(X$validation) %in% c("grouped","abridged")){
+                                abr_ages <- c(0,1,seq(5,max(X$AgeStart),5))
+                                Y <- X %>% filter(AgeStart %in% abr_ages)
+                        }
+                        # avoid some LT with l(OAG)==0
+                        if(Indicator_type=="lx" & last(X$DataValue)==0){
+                                Y <- X %>% filter(!AgeStart %in% last(AgeStart))
+                        }
+                        # avoid super rates that crush DemoTools extrap
+                        if(Indicator_type=="mx"){
+                                Age_m_bigger_1 <- min(X$AgeStart[X$DataValue>1])
+                                Y <- X %>% filter(AgeStart<Age_m_bigger_1)
+                        }
+                        return(Y)
+                }) %>% bind_rows()
+        
         # output
-        return(data_output %>% select(-ID))
+        return(data_output)
 }
 
 # group first ages of an abr lt in case it has 0:4 ages
@@ -221,11 +432,11 @@ split_abr_0_5 <- function(X, pop){
         # country_LocID = country_full$PK_LocID
         # browser()
         x <- X %>% filter(AgeStart==0)
-        pop <- pop %>% filter(MidPeriod==floor(unique(x$TimeMid))+.5, AgeGrpStart<5) %>% 
-                summarise(pop0_m = sum(m[AgeGrp==0]),
-                          pop0_f = sum(f[AgeGrp==0]),
-                          pop1_4_m = sum(m[AgeGrp %in% 1:4]),
-                          pop1_4_f = sum(f[AgeGrp %in% 1:4]))
+        pop <- pop %>% filter(Year==floor(unique(x$TimeMid))+.5, AgeStart<5) %>% 
+                summarise(pop0_m = sum(m[AgeStart==0]),
+                          pop0_f = sum(f[AgeStart==0]),
+                          pop1_4_m = sum(m[AgeStart %in% 1:4]),
+                          pop1_4_f = sum(f[AgeStart %in% 1:4]))
         if(is_m_or_l(x$IndicatorName)=="m"){
         if(x$SexName=="m"){
                 pop_s <- data.frame(pop0_s = pop$pop0_m, pop1_4_s = pop$pop1_4_m, 
@@ -380,6 +591,7 @@ desoverlap <- function(option, country_data, source_herarchy, treshold = .02, ..
                         Xds1 <- unique(X$ds1)
                         Xds2 <- unique(X$ds2)
                         Date <- X$TimeMid
+                        this_sex <- unique(country_data$SexName)
                         # if not overlap
                         if(unique(X$overlap) == 0){
                                 out <- X %>% mutate(dsF = ds1)
@@ -406,27 +618,27 @@ desoverlap <- function(option, country_data, source_herarchy, treshold = .02, ..
                                 if(length(ds_prev)>0 & length(ds_post)>0 & all(ds_prev==Xds2,ds_post==Xds2)){
                                         l1_prev <- country_data %>% 
                                                 filter(DataSourceShortName == ds_prev,
-                                                       TimeMid_floor %in% date_prev, SexName=="f", 
+                                                       TimeMid_floor %in% date_prev, SexName==this_sex, 
                                                        str_detect(IndicatorName,"l\\(x")) %>% 
                                                 lt_ambiguous(nMx_or_nqx_or_lx = .$DataValue,
-                                                             type = "l", Sex = "f",
-                                                             Age = .$AgeStart, Single = FALSE, ...)
+                                                             type = "l", Sex = this_sex,
+                                                             Age = .$AgeStart, Single = FALSE)
                                         l1_post <- country_data %>% 
                                                 filter(DataSourceShortName == ds_prev,
-                                                       TimeMid_floor %in% date_post, SexName=="f", 
+                                                       TimeMid_floor %in% date_post, SexName==this_sex, 
                                                        str_detect(IndicatorName,"l\\(x"))%>% 
                                                 lt_ambiguous(nMx_or_nqx_or_lx = .$DataValue,
-                                                             type = "l", Sex = "f",
-                                                             Age = .$AgeStart, Single = FALSE, ...)
+                                                             type = "l", Sex = this_sex,
+                                                             Age = .$AgeStart, Single = FALSE)
                                         l1_ds1 <- country_data %>% 
                                                 filter(DataSourceShortName == Xds1,
-                                                       TimeMid_floor %in% Date, SexName=="f", 
+                                                       TimeMid_floor %in% Date, SexName==this_sex, 
                                                        str_detect(IndicatorName,"l\\(x")) %>% 
                                                 split(list(.$TimeMid)) %>% 
                                                 lapply(function(X){
                                                         lt_ambiguous(nMx_or_nqx_or_lx = X$DataValue,
-                                                                     type = "l", Sex = "f",
-                                                                     Age = X$AgeStart, Single = FALSE, ...)         
+                                                                     type = "l", Sex = this_sex,
+                                                                     Age = X$AgeStart, Single = FALSE)         
                                                 }) %>% bind_rows(.)
                                         b = (l1_post$ex[1]-l1_prev$ex[1])/(date_post-date_prev)
                                         e0_hat <- l1_prev$ex[1] + (Date-date_prev) * b
@@ -477,6 +689,7 @@ remove_zero_rates <- function(input, Age_output = 0:100, ...){
 lc <- function(input, dates_out, jump_off = TRUE, prev_cross_over = FALSE, male_weight = .48,
                LC_fit_e0 = FALSE, params_out = FALSE, ...){
         dates_in <- sort(unique(as.numeric(input$Date)))
+        ages <- sort(unique(input$Age))
         params <- lc_params(input, male_weight)
         # fit k
         if(LC_fit_e0){
@@ -489,7 +702,7 @@ lc <- function(input, dates_out, jump_off = TRUE, prev_cross_over = FALSE, male_
                                                     interval = c(-20, 20),
                                                     ax = params$ax_male,
                                                     bx = params$bx_female,
-                                                    age = 0:100,
+                                                    age = ages,
                                                     sex = "m",
                                                     e0_target = e0_Males[j],
                                                     ...)$minimum
@@ -497,7 +710,7 @@ lc <- function(input, dates_out, jump_off = TRUE, prev_cross_over = FALSE, male_
                                                       interval = c(-20, 20),
                                                       ax = params$ax_female,
                                                       bx = params$bx_female,
-                                                      age = 0:100,
+                                                      age = ages,
                                                       sex = "f",
                                                       e0_target = e0_Females[j],
                                                       ...)$minimum
@@ -505,7 +718,7 @@ lc <- function(input, dates_out, jump_off = TRUE, prev_cross_over = FALSE, male_
                                                       interval = c(-20, 20),
                                                       ax = params$ax_both,
                                                       bx = params$Bx,
-                                                      age = 0:100,
+                                                      age = ages,
                                                       e0_target = e0_Both[j],
                                                       sex = "b",
                                                       ...)$minimum
@@ -518,15 +731,15 @@ lc <- function(input, dates_out, jump_off = TRUE, prev_cross_over = FALSE, male_
         # prev divergence sex: only common factor model (Li, 2005). Neither convergence nor divergence
         if(!prev_cross_over){
                      M_hat_males   <- lc_forecast(params$ax_male,params$bx_male,params$kt_male,params$M_male, Sex="m",
-                                                dates_in, dates_out,jump_off)
+                                                dates_in, dates_out,jump_off,ages)
                      M_hat_females <- lc_forecast(params$ax_female,params$bx_female,params$kt_female,params$M_female,Sex="f",
-                                                dates_in, dates_out,jump_off)
+                                                dates_in, dates_out,jump_off,ages)
              }
         if(prev_cross_over){
                      M_hat_males   <- lc_forecast(params$ax_male,params$Bx,params$Kt,params$M_male, Sex="m",
-                                                dates_in, dates_out,jump_off)
+                                                dates_in, dates_out,jump_off,ages)
                      M_hat_females <- lc_forecast(params$ax_female,params$Bx,params$Kt,params$M_female, Sex="f",
-                                                  dates_in, dates_out,jump_off)
+                                                  dates_in, dates_out,jump_off,ages)
                      # if ACF is choosen, then:
                         # forecast each k_ACF and apply:
                         # M_hat <- exp(ax + Bx %*% t(Kt_ACF_forecast) + Bx %*% t(kt_ACF_forecast))
@@ -542,7 +755,7 @@ lc <- function(input, dates_out, jump_off = TRUE, prev_cross_over = FALSE, male_
      }
 
 # project or retro-project with LC parameters
-lc_forecast <- function(ax, bx, kt, M, Sex, dates_in, dates_out, jump_off){
+lc_forecast <- function(ax, bx, kt, M, Sex, dates_in, dates_out, jump_off, ages){
         # browser()
         kt_diff <- diff(kt)
         summary_kt <- summary(lm(kt_diff ~ 1))
@@ -563,7 +776,7 @@ lc_forecast <- function(ax, bx, kt, M, Sex, dates_in, dates_out, jump_off){
         }
         M_hat <- exp(ax + bx %*% t(kt_forecast)) %>% as.data.frame()
         colnames(M_hat) <- dates_out
-        M_hat$Age <- 0:100
+        M_hat$Age <- ages
         M_hat <- M_hat %>%
                 pivot_longer(cols=-ncol(M_hat), names_to="Date",values_to="nMx")
         M_hat$Sex = Sex
@@ -695,18 +908,20 @@ download_HMD_data <- function(dir){
                 229, # Infant mortality (1q0)
                 239  # Under-five mortality (5q0)
         )
+        # dir = "LifeTables/AuxFiles"
         HMD_data <- list()
         j = 1
         countries_in_HMD <- read.csv(file.path(dir,"countries_HMD.csv")) %>% pull()
         HMD_countries <- fertestr::locs_avail() %>% 
                 inner_join(tibble(location_code_iso3 = countries_in_HMD))
         for(i in seq_along(HMD_countries$location_code)){
+                # i = 752
                 out <- get_recorddata(dataProcessTypeIds = c(6, 7, 9, 10),  
-                                      startYear = 1950,
+                                      # startYear = 1950,
                                       endYear = 2020,
                                       indicatorIds  = HMD_indicators,
                                       dataSourceShortNames = "HMD",
-                                      dataSourceYears = HMD_Year,
+                                      dataSourceYears = 2021,
                                       locIds = as.integer(HMD_countries$location_code[i]),
                                       locAreaTypeIds = 2,
                                       subGroupIds = 2) %>% 
@@ -721,7 +936,7 @@ download_HMD_data <- function(dir){
 }
 
 # write output in InputFile (PG code)
-write_InputFile <- function(input.file, life_table_age_sex, mySeries){
+write_InputFile <- function(input.file, life_table_age_sex, life_table_age_sex_abridged, mySeries){
         
         hs1 <- createStyle(fgFill = "#4F81BD", halign = "CENTER", textDecoration = "Bold", border = "Bottom", fontColour = "white")
         
@@ -760,8 +975,11 @@ write_InputFile <- function(input.file, life_table_age_sex, mySeries){
         # replace values with 1 to test if the export works
         # life_table_age_sex$value <- 1
         
-        openxlsx::deleteData(wb, sheet = "life_table_age_sex", cols = 1:ncol(life_table_age_sex), rows = 2:(nrow(life_table_age_sex)+1), gridExpand = TRUE)
-        openxlsx::writeData(wb, sheet = "life_table_age_sex", x = life_table_age_sex, startCol = 1, startRow = 2, colNames = FALSE)
+        openxlsx::deleteData(wb, sheet = "life_table_age_sex", cols = 1:ncol(life_table_age_sex_abridged), rows = 2:(nrow(life_table_age_sex_abridged)+1), gridExpand = TRUE)
+        openxlsx::writeData(wb, sheet = "life_table_age_sex", x = life_table_age_sex_abridged, startCol = 1, startRow = 2, colNames = FALSE)
+        
+        openxlsx::deleteData(wb, sheet = "lt_abridged", cols = 1:ncol(life_table_age_sex), rows = 2:(nrow(life_table_age_sex)+1), gridExpand = TRUE)
+        openxlsx::writeData(wb, sheet = "lt_abridged", x = life_table_age_sex, startCol = 1, startRow = 2, colNames = FALSE)
         
         # update_status worksheet
         update_status <- data.table(readWorkbook(xlsxFile = wb, sheet = "update_status"))
@@ -902,4 +1120,9 @@ plot_ex_time <- function(data, country = NULL){
                 theme_bw()+
                 theme(legend.position="bottom")+
                 facet_wrap(~Age,nrow = 3, scales = "free_y",)
+}
+
+Mode <- function(x) {
+        ux <- unique(x)
+        ux[which.max(tabulate(match(x, ux)))]
 }

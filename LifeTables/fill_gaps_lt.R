@@ -15,32 +15,42 @@ fill_gaps_lt <- function(country_db = NULL,
         if(!is.null(mort_params)){
                 Empirical_LT_LeeCarter_time_window_fit_LC <- mort_params$Empirical_LT_LeeCarter_time_window_fit_LC  %>% as.integer()
                 Empirical_LT_LeeCarter_time_window_fit_Limited_LC <- mort_params$Empirical_LT_LeeCarter_time_window_fit_Limited_LC %>% as.integer()
-                Empirical_LT_exclude_data_source <- mort_params$Empirical_LT_exclude_data_source
+                Empirical_LT_exclude_data_source <- tolower(mort_params$Empirical_LT_exclude_data_source)
                 Empirical_LT_LeeCarter_non_divergent <- mort_params$Empirical_LT_LeeCarter_non_divergent %>% as.logical()
                 Empirical_LT_LeeCarter_jump_off <- mort_params$Empirical_LT_LeeCarter_jump_off  %>% as.logical()
                 Empirical_LT_LeeCarter_fit_e0 <- mort_params$Empirical_LT_LeeCarter_fit_e0   %>% as.logical()  
-                Empirical_LT_smoothing <- mort_params$Empirical_LT_smoothing %>% as.logical()
-                Age_Specific_Mortality_Input_Data <- mort_params$Age_Specific_Mortality_Input_Data
+                Empirical_LT_smoothing_output <- tolower(mort_params$Empirical_LT_smoothing_output %>% as.character())
+                Empirical_LT_smoothing_input <- tolower(mort_params$Empirical_LT_smoothing_input %>% as.character())
+                Age_Specific_Mortality_Input_Data <- tolower(mort_params$Age_Specific_Mortality_Input_Data %>% as.character())
         }
 
-        # receive data ------------------------------------------------------------
-        
+        # handle strings ----------------------------------------------------------
+
         # data excluded from InputFiles
         if(!is.na(Empirical_LT_exclude_data_source)){
-                Empirical_LT_exclude_data_source <- tolower(trimws(strsplit(Empirical_LT_exclude_data_source,",")[[1]]))
+                Empirical_LT_exclude_data_source <- trimws(strsplit(Empirical_LT_exclude_data_source,",")[[1]])
                 possible_ds <- c("HMD","EuroStat","EuroStat",    "VR(WPP)","VR(WPP)","VR(WPP)","WHO DB","WHO DB","HLD 2020","HLD 2020","DYB","GBD 2016","GBD 2016","WPP19")
                 inputs_excl_ds <- c("hmd","eurostat","eurostats","vr(wpp)","wpp",   "vr (wpp)", "who db","who",   "hld 2020", "hld", "dyb", "gbd 2016","gbd", "wpp19")
                 exclude_ds <- possible_ds[inputs_excl_ds %in% Empirical_LT_exclude_data_source]        
         }else{
                 exclude_ds <- NULL
         }
+        # input data
+        possible_input <- c("abridged","abr","complete","single")
+        ok_input <- c("abridged","abridged","complete","complete")
+        Age_Specific_Mortality_Input_Data <- ok_input[possible_input %in% Age_Specific_Mortality_Input_Data]
+        # mortality laws?
         
-        # first data wrangling: deduplicate (PG fun), get relevant vars and rename WPP got from VR  
+        # receive data ------------------------------------------------------------
+        
+        # deduplicate (PG fun)  
         country_db_dedup <- try(country_db %>% as.data.table() %>% deduplicates())
         if("try-error" %in% class(country_db_dedup)){
                 log_print("No VR or Estimated data are in included in downloaded data.")
                 stop("No VR or Estimated data are in included in downloaded data.")
         }
+        
+        # get relevant vars and rename WPP got from VR
         country_raw_data <-  country_db_dedup %>% 
                 select(SeriesID, IndicatorID, IndicatorName, DataSourceShortName, DataProcess, 
                        DataReliabilitySort, DataTypeSort, nrank3,
@@ -52,7 +62,8 @@ fill_gaps_lt <- function(country_db = NULL,
                        TimeLabel = as.character(TimeLabel),
                        TimeMid = round(TimeMid,1),
                        TimeMid_floor = trunc(TimeMid),
-                       DataSourceShortName = ifelse(DataSourceShortName=="WPP", "VR(WPP)", DataSourceShortName)) %>% 
+                       DataSourceShortName = ifelse(DataSourceShortName=="WPP", "VR(WPP)", DataSourceShortName),
+                       DataTypeSort = as.integer(DataTypeSort)) %>% 
                 filter(!DataSourceShortName %in% exclude_ds) %>% 
                 arrange(TimeLabel, TimeMid,
                         SeriesID, IndicatorID, IndicatorName, DataSourceShortName, DataProcess, DataReliabilitySort, DataTypeSort, nrank3,
@@ -66,8 +77,7 @@ fill_gaps_lt <- function(country_db = NULL,
                                                                 DataSourceShortName!="DYB")
         }
         
-        # asking VR, Estimates or both ----------------------------------------
-
+        # what year-sex-type of data wnats in ----------------------------------------
         country_raw_data <- bind_rows(
                 country_raw_data %>% 
                         filter(DataProcess == "Estimate") %>% 
@@ -81,20 +91,20 @@ fill_gaps_lt <- function(country_db = NULL,
                         filter(!DataProcess %in% c("VR","Estimate") | TimeMid_floor< first_year) # want the rest available
         )
 
-        # validation and zeroes ----------------------------------------------------------
-        
-        # add WPP19 as base point in 1950-1955 in case it is neccesary
+        # add WPP19 as a base point in 1950-1955 in case it is neccesary
         country_raw_data_wpp19 <- add_wpp19_1950data(country = country_full$PK_LocID, country_data = country_raw_data)
-
+        
         # get exposures estimates from last revision as a reference (needed at some instance after) 
-        pop <- DemoToolsData::popWpp2019x1 %>%
+        pop <- DemoToolsData::WPP2019_pop %>%
                 rename(m=PopMale, f=PopFemale) %>% 
-                filter(LocID==country_full$PK_LocID, Time <= last_year)
-                       
+                filter(LocID==country_full$PK_LocID, Year <= last_year)
+        
+        # validation and zeroes ----------------------------------------------------------
+
         # validation: can be labelled ad single or abridged? 
         country_data_validation <- is_data_valid(country_data = country_raw_data_wpp19, pop = pop) 
         
-        # smooth zeroes cells in mx or lx
+        # smooth zeroes cells in mx or lx, group 1:4, keep worth ages
         country_data_imputed <- impute_data(data = country_data_validation, pop = pop)
         
         # data with errors
@@ -103,89 +113,99 @@ fill_gaps_lt <- function(country_db = NULL,
         # valid data for the country
         country_data <- country_data_imputed %>% filter(!validation %in% c("error","zeros"))
         
-        # data selection ----------------------------------------------------------
+        # data selection: sex specific ----------------------------------------------------------
         
-        # data selection following criterias
-        selected_data <- select_data(country_data)
-        
-        # detect main time serie and gaps ----------------------------------------------------------
-        
-        chunks_data <- split(selected_data$TimeMid[selected_data!="WPP19"], 
-                             cumsum(c(1, diff(selected_data$TimeMid[selected_data!="WPP19"]) >= 2))) # !=1
-        
-        main_data_time <- chunks_data[which(lengths(chunks_data)>5)] %>% unlist(.)
-        
-        # define intervals of gap: take care of some countries with sparse data points and any consecutive data
-        if(!is.null(main_data_time)){
-                years_gaps <- sort(dates_out[which(!floor(dates_out) %in% floor(main_data_time))])
-                intervals_gaps <- split(years_gaps, cumsum(c(1, diff(years_gaps) != 1)))
-        }else{
-                years_gaps <- sort(dates_out[which(!floor(dates_out) %in% floor(selected_data$TimeMid[selected_data!="WPP19"]))])
-                intervals_gaps <- split(years_gaps, cumsum(c(1, diff(years_gaps) != 1)))
-        }
-        
-        # if we dont have a huge first gap don´t use wpp19 as a base in 1950
-        if(!(first_year+.5) %in% intervals_gaps[[1]] |  
-           ((first_year+.5) %in% intervals_gaps[[1]] & !length(intervals_gaps[[1]])>15)){
-                selected_data <- selected_data %>% filter(DataSourceShortName!="WPP19")
-        }
-        
-        # is part of the main time serie or is an additional data point, as a resoruce for pivoting in the filling
-        selected_data <- selected_data %>% 
-                mutate(Type = ifelse(TimeMid %in% main_data_time, "main", "add"))
-        
-        # same cut-off at oldest ages
-        if(any(selected_data$Type=="main")){
-                extrapFrom_single <- min(selected_data$OAG[selected_data$Type=="main"])
-        }else{
-                extrapFrom_single <- max(selected_data$OAG)
+        selection_gaps_sex <- list()
+        for(this_sex in c("m","f")){
+                # data selection following criterias
+                selected_data <- select_data(country_data = country_data %>% filter(SexName==this_sex))
+                
+                # detect main time serie and gaps ----------------------------------------------------------
+                
+                chunks_data <- split(selected_data$TimeMid[selected_data!="WPP19"], 
+                                     cumsum(c(1, diff(selected_data$TimeMid[selected_data!="WPP19"]) >= 2))) # !=1
+                
+                main_data_time <- chunks_data[which(lengths(chunks_data)>5)] %>% unlist(.)
+                
+                # define intervals of gap: take care of some countries with sparse data points and any consecutive data
+                if(!is.null(main_data_time)){
+                        years_gaps <- sort(dates_out[which(!(dates_out) %in% (main_data_time))])
+                        intervals_gaps <- split(years_gaps, cumsum(c(1, diff(years_gaps) != 1)))
+                }else{
+                        years_gaps <- sort(dates_out[which(!(dates_out) %in% (selected_data$TimeMid[selected_data!="WPP19"]))])
+                        intervals_gaps <- split(years_gaps, cumsum(c(1, diff(years_gaps) != 1)))
+                }
+                
+                # if we dont have a huge first gap (15 years) don´t use wpp19 as a base in 1953
+                if(!(first_year+.5) %in% intervals_gaps[[1]] |  
+                   ((first_year+.5) %in% intervals_gaps[[1]] & !length(intervals_gaps[[1]])>15)){
+                        selected_data <- selected_data %>% filter(DataSourceShortName!="WPP19")
+                }
+                
+                # is each year data part of the main time serie or is an additional data point, as a resource for pivoting in the filling
+                selected_data <- selected_data %>% 
+                        mutate(Type = ifelse(TimeMid %in% main_data_time, "main", "add"))
+                
+                # get same cut-off at oldest ages:the mode
+                if(any(selected_data$Type=="main")){
+                        extrapFrom_single <- Mode(selected_data$OAG[selected_data$Type=="main"])
+                }else{
+                        extrapFrom_single <- Mode(selected_data$OAG)
+                }
+                
+                # selection data attributes for each sex
+                selection_gaps_sex[[this_sex]] <- list(selected_data = selected_data %>% mutate(SexName = this_sex), 
+                                                       chunks_data = chunks_data,
+                                                       main_data_time = main_data_time,
+                                                       years_gaps = years_gaps,
+                                                       intervals_gaps = intervals_gaps, 
+                                                       extrapFrom_single = extrapFrom_single)  
         }
         
         # keep life table data that was selected
+        selected_data <- bind_rows(selection_gaps_sex[["f"]]$selected_data, selection_gaps_sex[["m"]]$selected_data)
+        extrapFrom_single <- min(selection_gaps_sex[["f"]]$extrapFrom_single, selection_gaps_sex[["m"]]$extrapFrom_single)
         lt_data_raw <- country_data %>% 
-                inner_join(selected_data %>% select(-nrank3,-DataTypeSort), 
-                           by=c("DataSourceShortName","TimeLabel", "IndicatorName","TimeMid")) %>% 
+                inner_join(selected_data %>% select(-nrank3,-DataTypeSort,-TimeMid_floor), 
+                           by=c("DataSourceShortName","TimeLabel", "IndicatorName","TimeMid","SexName")) %>% 
                 filter(!is.na(Type), str_detect(IndicatorName,"x")) %>% 
                 mutate(TimeMid_floor = floor(TimeMid)) %>% 
                 distinct()
+                
+        # harmonize all lt data with same close-out ------------------------------------------
+        # In this step:
+                # if is input is Abridged then standarize with same OAG. If not, graduate all to single ages
+        Single_first <- ifelse(Age_Specific_Mortality_Input_Data == "abridged", FALSE, TRUE)
         
-        # harmonize all lt data to single ages ans same close-out ------------------------------------------
+        # standarize/graduate
         lt_data <-  lt_data_raw %>% 
                 split(list(.$TimeMid, .$SexName), drop = T) %>% 
                 lapply(function(X){
                         print(paste0(unique(X$SexName),"-", unique(X$TimeMid)))
-                        # if(unique(X$TimeMid==1961.5) & unique(X$SexName=="f")){browser()}
-                        # X <- lt_data_raw %>% filter(TimeMid==1966.5,SexName=="f")
+                        # X <- lt_data_raw %>% filter(TimeMid==1968.5,SexName=="m")
                         X_TimeMid <- unique(X$TimeMid)
                         X_TimeMid_floor <- unique(X$TimeMid_floor)
                         X_sex <- unique(X$SexName)
                         X_DataProcess <- unique(X$DataProcess)
                         X_ages <- X$AgeStart
                         Indicator_type = ifelse(str_detect(unique(X$IndicatorName),"m\\(x,n"),"mx",
-                                        ifelse(str_detect(unique(X$IndicatorName),"l\\(x"),"lx",NA))
-                        abr_ages <- c(0,1,seq(5,max(X$AgeStart),5))
-                        # just keep abr ages in case
-                        if(Indicator_type=="lx" & !unique(X$complete)){
-                                X <- X %>% filter(AgeStart %in% abr_ages)
-                        }
-                        # avoid some LT with l(OAG)==0
-                        if(Indicator_type=="lx" & last(X$DataValue)==0){
-                                X <- X %>% filter(!AgeStart %in% last(abr_ages))
-                        }
-                        # avoid super rates that crush DemoTools extrap
+                                                ifelse(str_detect(unique(X$IndicatorName),"l\\(x"),"lx",NA))
+                        # detect if it is a real OAG
+                        X_OAG <- max(X_ages)
                         if(Indicator_type=="mx"){
-                                Age_m_bigger_1 <- min(X$AgeStart[X$DataValue>1])
-                                X <- X %>% filter(AgeStart<Age_m_bigger_1)
+                                N <- length(X_ages)
+                                is_an_OAG <- ifelse(X$DataValue[N] > X$DataValue[N-1], TRUE, FALSE)
+                        }else{
+                                is_an_OAG = TRUE # is the default also in DemoTools, I don´t know how to infer this only with l(x)
                         }
-                        
+                                
                         # see inputs for adjustments
                         X_inputs <- mort_inputs %>% filter(TimeMid_floor == X_TimeMid_floor, Sex == X_sex)
                         
                         # adjust infant-child if was defined in InputFiles
-                        adjust_LT_infant <- ifelse(nrow(X_inputs)==0, F,
-                                                   X_inputs$adjust_LT_under_five)
+                        adjust_LT_infant <- ifelse(nrow(X_inputs)==0, F, X_inputs$adjust_LT_under_five)
                         if(adjust_LT_infant){ # only for Abr selection
-                                if(Age_Specific_Mortality_Input_Data == "Abridged" & !unique(X$complete)){
+                                if(Age_Specific_Mortality_Input_Data == "abridged" & !unique(X$complete)){
                                         q0_1     <- X_inputs$q1_input
                                         q0_5     <- X_inputs$q5_input
                                         q1_4     <- 1-(1-q0_5)/(1-q0_1)
@@ -215,45 +235,54 @@ fill_gaps_lt <- function(country_db = NULL,
                                 }        
                         }
                         
+                        # VR coverage adjustment for ages>=5, if was defined in InputFiles
+                        # first get always rates
+                        LT <- lt_ambiguous(nMx_or_nqx_or_lx = X$DataValue,
+                                            type = Indicator_type,
+                                            Age = X_ages,
+                                            Sex = X_sex,
+                                            Single = Single_first,
+                                            OAnew = X_OAG)
+                        # recover OAG rate just to be sure DemoTools did not impute it
+                        if(Indicator_type=="mx"){
+                                LT$nMx[LT$Age==X_OAG] <- X$DataValue[LT$Age==X_OAG]
+                        }
+                        adjust_VR_completeness <- ifelse(is.na(X_DataProcess) | X_DataProcess != "VR" | nrow(X_inputs)==0, 1, 
+                                                          as.numeric(X_inputs$VR_completeness))
+                        LT$nMx[LT$Age>=5] <- LT$nMx[LT$Age>=5]/ adjust_VR_completeness
+                        
                         # Old-age adjustments if was defined in InputFiles
                         adjust_LT_oldage <- ifelse(nrow(X_inputs)==0, F, X_inputs$adjust_LT_oldage)
                         # six groups as minimum data
-                        min_age_fit <- sort(X$AgeStart, T)[6]
+                        min_age_fit <- sort(X_ages, T)[6]
+                        # kind of age interval
                         N_fit <- ifelse(unique(X$complete),1,5)
                         if(adjust_LT_oldage){
                                 X_extrapLaw <- X_inputs$extrapLaw
-                                X_extrapFrom <- min(X_inputs$extrapFrom, max(X$AgeStart))
+                                X_extrapFrom <- min(X_inputs$extrapFrom, X_OAG)
                                 X_range_age_fit <- as.numeric(stringr::str_extract_all(X_inputs$extrapFit, "\\d+")[[1]])
                                 X_extrapFit <- seq(min(min_age_fit, X_range_age_fit[1]),
-                                                   min(max(X$AgeStart), ifelse(is.na(X_range_age_fit[2]),1e3,X_range_age_fit[2])),
+                                                   min(X_OAG, ifelse(is.na(X_range_age_fit[2]),1e3,X_range_age_fit[2])),
                                                        N_fit)
+                                if(Age_Specific_Mortality_Input_Data == "abridged"){
+                                        X_ages_out <- c(0,1,seq(5,OAnew,5))
+                                }else{
+                                        X_ages_out <- 0:OAnew
+                                }
                                 # coKannisto needs both sex
                                 if(X_extrapLaw == "coKannisto"){
                                         # the other sex
                                         Y <- lt_data_raw %>% filter(TimeMid == X_TimeMid,
                                                                     DataProcess == X_DataProcess,
                                                                     SexName != X_sex)
-                                        # conver first to rates in case it´s lx, not extrapolating
-                                        if(Indicator_type=="lx" & !unique(Y$complete)){
-                                                Y <- Y %>% filter(AgeStart %in% abr_ages)
-                                        }
-                                        if(Indicator_type=="lx" & last(Y$DataValue)==0){
-                                                Y <- Y %>% filter(!AgeStart %in% last(abr_ages))
-                                        }
-                                        # avoid super rates that crush DemoTools extrap
-                                        if(Indicator_type=="mx"){
-                                                X <- X %>% filter(DataValue<=1)
-                                        }
-                                        X_LT <- lt_ambiguous(nMx_or_nqx_or_lx = X$DataValue,
-                                                             type = Indicator_type,
-                                                             Age = X$AgeStart,
-                                                             Sex = X_sex,
-                                                             Single = T)
+                                        X_LT <- LT
+                                        # give to the other sex the same oag
                                         Y_LT <- lt_ambiguous(nMx_or_nqx_or_lx = Y$DataValue,
                                                              type = Indicator_type,
                                                              Age = Y$AgeStart,
                                                              Sex = unique(Y$SexName),
-                                                             Single = T)
+                                                             Single = Single_first,
+                                                             OAnew = X_OAG)
                                         if(X_sex == "m"){
                                                 mxM = X_LT %>% select(nMx)
                                                 mxF = Y_LT %>% select(nMx)
@@ -263,48 +292,44 @@ fill_gaps_lt <- function(country_db = NULL,
                                         rownames(mxM) <- rownames(mxM) <- X_LT$Age
                                         XY_LT <- cokannisto(mxM, mxF,
                                                             est.ages = X_extrapFit, 
-                                                            proj.ages = X_extrapFrom:OAnew)
+                                                            proj.ages = seq(X_extrapFrom,OAnew,N_fit))
                                         if(X_sex == "m"){
                                                 X_LT <- as.numeric(XY_LT$male)
                                         }else{
                                                 X_LT <- as.numeric(XY_LT$female)
                                         }
-                                        LT <- lt_single_mx(X_LT,Age = 0:OAnew)
+                                        LT <- lt_single_mx(X_LT, Age = X_ages_out)
                                 }else{
-                                        LT <- lt_ambiguous(nMx_or_nqx_or_lx = X$DataValue,
-                                                           type = Indicator_type,
-                                                           Age = X$AgeStart,
+                                        # if not coKannisto
+                                        LT <- lt_ambiguous(nMx_or_nqx_or_lx = LT$nMx,
+                                                           type = "mx",
+                                                           Age = LT$Age,
                                                            Sex = X_sex,
                                                            extrapLaw = X_extrapLaw,
                                                            extrapFrom = X_extrapFrom,
                                                            extrapFit = X_extrapFit,
                                                            OAnew = OAnew,
-                                                           Single = T)      
+                                                           Single = Single_first,
+                                                           OAG = is_an_OAG)      
                                 }
                         }else{
+                                # if not adjustment on old ages
                                 X_extrapLaw <- NULL
                                 X_extrapFrom <- min(extrapFrom_single,max(X$AgeStart))
                                 X_extrapFit <- seq(min(min_age_fit,60),max(X$AgeStart),N_fit)
-                                LT <- lt_ambiguous(nMx_or_nqx_or_lx = X$DataValue,
-                                                   type = Indicator_type,
-                                                   Age = X$AgeStart,
+                                LT <- lt_ambiguous(nMx_or_nqx_or_lx = LT$nMx,
+                                                   type = "mx",
+                                                   Age = LT$Age,
                                                    Sex = X_sex,
                                                    extrapLaw = X_extrapLaw,
                                                    extrapFrom = X_extrapFrom,
                                                    extrapFit = X_extrapFit,
                                                    OAnew = OAnew,
-                                                   Single = T)
+                                                   Single = Single_first,
+                                                   OAG=is_an_OAG)
                         }
 
-                        # VR coverage adjustment if was defined in InputFiles
-                        adjust_VR_completeness <- ifelse(is.na(X_DataProcess) | X_DataProcess != "VR" | nrow(X_inputs)==0, 1, 
-                                                         ifelse(X_inputs$VR_completeness>.6, 1, X_inputs$VR_completeness))
-                        LT_VR <- DemoTools::lt_single_mx(nMx = LT$nMx/adjust_VR_completeness,
-                                              Age = LT$Age,
-                                              Sex = LT$Sex,
-                                              extrapFrom = OAnew)
-                        
-                        # fnial vars
+                        # final vars
                         LT$Date <- as.numeric(unique(X$TimeMid))
                         LT$Type <- unique(X$Type)
                         LT$Source <- unique(X$DataSourceShortName)
@@ -312,191 +337,219 @@ fill_gaps_lt <- function(country_db = NULL,
                         LT$DataProcess <- X_DataProcess
                         
                         # if last age is NA (some DemoTools issue with super rates) set to 50% more than previous
-                        LT$nMx[LT$Age==100 & is.na(LT$nMx)] <- LT$nMx[LT$Age==99] * 1.5
+                        LT$nMx[LT$Age==100 & is.na(LT$nMx)] <- LT$nMx[LT$Age==(100-N_fit)] * 1.5
                         
                         return(LT)
                 }) %>% 
                 bind_rows()
         
-        # loop over gaps and estimate a LC model -----------------------------------
+        # keep for comparing in a plot: adj and not adj on oldest ages
+        old_age_adj_data <- lt_data
         
-        # take structure from lt_data
-        gap_middle_data <- gap_before_data <- gap_after_data <- lt_data %>% filter(Age==-1)
-        
-        # fill depending the nature of the gap
-        if(length(intervals_gaps[[1]])!=0){
-                # decide for different kind of gaps
-                for(gap in intervals_gaps){
-                        print(gap)
-                        # gap in the left
-                        if((first_year+.5) %in% gap){
-                                # if we have some lonely data point to pivot 
-                                if(any(unique(lt_data$Date)<max(gap))){
-                                        window <- min(lt_data$Date[lt_data$Type=="main"])+Empirical_LT_LeeCarter_time_window_fit_Limited_LC
-                                        LClim_data <- lt_data %>% 
-                                                filter(Date >= 1940, Date <= window) %>% 
-                                                arrange(Date,Age) 
-                                        # if fit e0 for kt parameter
-                                        if(!Empirical_LT_LeeCarter_fit_e0){
-                                                gap_before_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap),
-                                                                                 Single = T, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat
-                                        }else{
-                                                # takes last observed and interval not main source points
-                                                dates_e0 <- lt_data %>% filter(Date<=min(LClim_data$Date[LClim_data$Type=="main"]), Age==0) %>% 
-                                                        select(Date) %>% unique() %>% pull()
-                                                e0_Males <- lt_data %>% filter(Date<=min(LClim_data$Date[LClim_data$Type=="main"]), Age==0, Sex == "m") %>% 
-                                                        select(ex) %>% unique() %>% pull()
-                                                e0_Females <- lt_data %>% filter(Date<=min(LClim_data$Date[LClim_data$Type=="main"]), Age==0, Sex == "f") %>% 
-                                                        select(ex) %>% unique() %>% pull()
-                                                gap_before_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
-                                                                                 dates_e0 = dates_e0, e0_Males = e0_Males, e0_Females = e0_Females,
-                                                                                 Single = T, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat
-                                        }
-                                        gap_before_data <- gap_before_data %>% mutate(Type = "LC-Lim", Source = "LC-Lim")
+        # smooth in case is abr
+        if(Age_Specific_Mortality_Input_Data == "abridged" & Empirical_LT_smoothing_input != "none"){
+                # get structure
+                lt_data_smooth <- lt_data %>% mutate(nMx_smooth = NA) %>% filter(Age==-1) 
+                # redefine length left/right observations
+                window_smooth <- as.integer(str_extract_all(Empirical_LT_smoothing_input, "\\d+")[[1]])
+                k_smooth <- ifelse(window_smooth==7,3,ifelse(window_smooth==5, 2, 1))
+                for(this_sex in c("f","m")){
+                        # this_sex = "f"
+                        for(chunk in selection_gaps_sex[[this_sex]]$chunks_data){
+                                # chunk <- selection_gaps_sex[[this_sex]]$chunks_data$`2`
+                                lt_data_smooth_sex <- lt_data %>% 
+                                        filter(Date %in% chunk, Sex == this_sex) %>% 
+                                        group_by(Sex,Age) %>% 
+                                        arrange(Sex, Age, Date) %>% 
+                                        mutate(nMx_smooth = slide(nMx, mean, .before = k_smooth, .after = k_smooth) %>% unlist()) %>% 
+                                        ungroup()
+                                # take out corners
+                                n_chunk <- length(chunk)
+                                # 3-years
+                                if(k_smooth == 1 & n_chunk==2){
+                                        lt_data_smooth_sex_chunk <- lt_data_smooth_sex %>% 
+                                                filter(Date %in% max(chunk)) %>% 
+                                                mutate(Date = mean(chunk))
+                                }else if(k_smooth == 1 & n_chunk>2){
+                                        lt_data_smooth_sex_chunk <- lt_data_smooth_sex %>% 
+                                                filter(!Date %in% range(chunk))
+                                # 5-years
+                                }else if(k_smooth == 2 & n_chunk %in% 2:4){
+                                        lt_data_smooth_sex_chunk <- lt_data_smooth_sex %>% 
+                                                filter(Date %in% chunk[2]) %>% 
+                                                mutate(Date = chunk[2])
+                                }else if(k_smooth == 2 & n_chunk>=5){
+                                        lt_data_smooth_sex_chunk <- lt_data_smooth_sex %>% 
+                                                filter(!Date %in% chunk[c(1,2,n_chunk-1,n_chunk)])
+                                # 7-years
+                                }else if(k_smooth == 3 & n_chunk %in% 2:6){
+                                        lt_data_smooth_sex_chunk <- lt_data_smooth_sex %>% 
+                                                filter(Date %in% chunk[3]) %>% 
+                                                mutate(Date = mean(chunk))
+                                }else if(k_smooth == 3 & n_chunk>=7){
+                                        lt_data_smooth_sex_chunk <- lt_data_smooth_sex %>% 
+                                                filter(!Date %in% chunk[c(1,2,3,n_chunk-2,n_chunk-1,n_chunk)])
                                 }else{
-                                        # apply usual LC for extrapolating to 1950
-                                        window <- Empirical_LT_LeeCarter_time_window_fit_LC
-                                        LC_data <- lt_data %>% 
-                                                filter(Date <= (max(gap)+window))
-                                        gap_before_data <- lc(input = LC_data, dates_out = gap, 
-                                                              jump_off = Empirical_LT_LeeCarter_jump_off, 
-                                                              prev_cross_over = Empirical_LT_LeeCarter_non_divergent,
-                                                              LC_fit_e0 = Empirical_LT_LeeCarter_fit_e0) %>% 
-                                                        split(list(.$Date, .$Sex)) %>% 
-                                                        lapply(function(X){
-                                                                LT <- lt_single_mx(nMx = X$nMx,
-                                                                                   Age = X$Age,
-                                                                                   Sex = unique(X$Sex))
-                                                                LT$Sex <- unique(X$Sex)
-                                                                LT$Date <- as.numeric(unique(X$Date))
-                                                                LT
-                                                        }) %>% 
-                                                        do.call(rbind,.) 
-                                        gap_before_data <- gap_before_data %>% mutate(Type = "LC", Source = "LC")
+                                        lt_data_smooth_sex_chunk <- lt_data_smooth_sex
                                 }
+                                lt_data_smooth <- rbind(lt_data_smooth, lt_data_smooth_sex_chunk)
                         }
-                        # gap in the right
-                        if(2020.5 %in% gap){
-                                # apply usual LC
-                                window <- Empirical_LT_LeeCarter_time_window_fit_LC
-                                LC_data <- lt_data %>% filter(Date >= (min(gap)-window))
-                                if(length(unique(LC_data$Date))==2){
-                                        LClim_data <- LC_data
-                                        other_dates <- unique(lt_data$Date[!lt_data$Date %in% unique(LClim_data$Date)])
-                                        dist_to_include <- abs(other_dates-mean(unique(LClim_data$Date)))
-                                        other_date_to_include <- other_dates[dist_to_include==min(dist_to_include)][1]
-                                        LClim_data <- bind_rows(LClim_data,
-                                                                lt_data %>% filter(Date == other_date_to_include))%>% 
-                                                arrange(Date,Age)
-                                        if(!Empirical_LT_LeeCarter_fit_e0){
-                                                gap_middle_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap),
-                                                                                 Single = T, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat
-                                        }else{
-                                                dates_e0 <- LClim_data %>% filter(Type!="main" | Date %in% c(min(gap)-1,max(gap)+1), Age==0) %>% 
-                                                        select(Date) %>% unique() %>% pull()
-                                                e0_Males <- LClim_data %>% filter(Type!="main" | Date %in% c(min(gap)-1,max(gap)+1), Age==0, Sex=="m") %>% 
-                                                        select(ex) %>% pull()
-                                                e0_Females <- LClim_data %>% filter(Type!="main" | Date %in% c(min(gap)-1,max(gap)+1), Age==0, Sex=="f") %>% 
-                                                        select(ex) %>% pull()
-                                                gap_after_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
-                                                                                   dates_e0 = dates_e0, e0_Males = e0_Males, e0_Females = e0_Females,
-                                                                                   Single = T, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat %>% 
-                                                        mutate(Type = "LC-Lim", Source = "LC-Lim")
-                                        }
-                                }
-                                if(length(unique(LC_data$Date)) %in% 3:5){
-                                        LClim_data <- LC_data
-                                        if(!Empirical_LT_LeeCarter_fit_e0){
-                                                gap_before_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap),
-                                                                                 Single = T, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat
-                                        }else{
-                                                # takes last observed and interval not main source points
-                                                dates_e0 <- lt_data %>% filter(Date<=min(LClim_data$Date[LClim_data$Type=="main"]), Age==0) %>% 
-                                                        select(Date) %>% unique() %>% pull()
-                                                e0_Males <- lt_data %>% filter(Date<=min(LClim_data$Date[LClim_data$Type=="main"]), Age==0, Sex == "m") %>% 
-                                                        select(ex) %>% unique() %>% pull()
-                                                e0_Females <- lt_data %>% filter(Date<=min(LClim_data$Date[LClim_data$Type=="main"]), Age==0, Sex == "f") %>% 
-                                                        select(ex) %>% unique() %>% pull()
-                                                gap_after_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
-                                                                                 dates_e0 = dates_e0, e0_Males = e0_Males, e0_Females = e0_Females,
-                                                                                 Single = T, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat %>% 
-                                                        mutate(Type = "LC-Lim", Source = "LC-Lim")
-                                        }
-                                }
-                                if(length(unique(LC_data$Date))>5){
-                                        gap_after_data <- lc(input = LC_data, dates_out = gap, 
-                                                             jump_off = Empirical_LT_LeeCarter_jump_off,
-                                                             prev_cross_over = Empirical_LT_LeeCarter_non_divergent,
-                                                             LC_fit_e0 = Empirical_LT_LeeCarter_fit_e0) %>% 
-                                                split(list(.$Date, .$Sex), drop = TRUE) %>% 
-                                                lapply(function(X){
-                                                        LT <- lt_single_mx(nMx = X$nMx,
-                                                                           Age = X$Age,
-                                                                           Sex = unique(X$Sex))
-                                                        LT$Sex <- unique(X$Sex)
-                                                        LT$Date <- as.numeric(unique(X$Date))
-                                                        LT
-                                                }) %>% 
-                                                do.call(rbind,.)  %>% mutate(Type = "LC", Source = "LC") 
-                                }
+                }
+                lt_data <- lt_data_smooth %>%
+                        arrange(Sex, Date, Age) %>% 
+                        split(list(.$Date, .$Sex), drop = T) %>% 
+                        lapply(function(X){
+                                print(paste0(unique(X$Sex),"-", unique(X$Date)))
+                                # X <- lt_data_smooth %>% filter(Date==1980.5,Sex=="f")
+                                LT <- lt_abridged(nMx = X$nMx_smooth, Age = X$Age, Sex = unique(X$Sex)) 
+                                LT$Date <- X$Date
+                                LT$Type <- unique(X$Type)
+                                LT$Source <- unique(X$Source)
+                                LT$Sex  <-  unique(X$Sex)
+                                LT$DataProcess <- unique(X$DataProcess)
+                                return(LT)
                         }
-                        # central gaps
-                        if(!any((c(first_year,last_year)+.5) %in% gap)){
-                                window <- Empirical_LT_LeeCarter_time_window_fit_Limited_LC
-                                LClim_data <- lt_data %>% 
-                                        filter(Date >= min(gap)-window, 
-                                               Date <= max(gap)+window) %>% 
-                                        arrange(Date,Age) 
-                                # sparse data can only take two point. LCLim needs three
-                                if(length(unique(LClim_data$Date))==2){
-                                        other_dates <- unique(lt_data$Date[!lt_data$Date%in%unique(LClim_data$Date)])
-                                        dist_to_include <- abs(other_dates-mean(unique(LClim_data$Date)))
-                                        other_date_to_include <- other_dates[dist_to_include==min(dist_to_include)][1]
-                                        LClim_data <- bind_rows(LClim_data,
-                                                                lt_data %>% filter(Date == other_date_to_include))%>% 
-                                                arrange(Date,Age) 
-                                }
-                                # if fit e0
-                                if(!Empirical_LT_LeeCarter_fit_e0){
-                                        gap_middle_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap),
-                                                                         Single = T, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat
-                                }else{
-                                        dates_e0 <- LClim_data %>% filter(Type!="main" | Date %in% c(min(gap)-1,max(gap)+1), Age==0) %>% 
-                                                select(Date) %>% unique() %>% pull()
-                                        e0_Males <- LClim_data %>% filter(Type!="main" | Date %in% c(min(gap)-1,max(gap)+1), Age==0, Sex=="m") %>% 
-                                                select(ex) %>% pull()
-                                        e0_Females <- LClim_data %>% filter(Type!="main" | Date %in% c(min(gap)-1,max(gap)+1), Age==0, Sex=="f") %>% 
-                                                select(ex) %>% pull()
-                                        gap_middle_data_i <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
-                                                                         dates_e0 = dates_e0, e0_Males = e0_Males, e0_Females = e0_Females,
-                                                                         Single = T, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat
-                                } 
-                                gap_middle_data <- bind_rows(gap_middle_data,gap_middle_data_i)
-                        }
-                }        
+                        ) %>% 
+                        bind_rows() %>% 
+                        bind_rows(old_age_adj_data %>% filter(Source == "WPP19")) %>% 
+                        arrange(Date,Sex,Age)
+                # redefine chunks of selected data
+                selected_data_smooth <- lt_data %>% distinct(Date,Sex,Source)
+                for(this_sex in c("m","f")){
+                        # detect main time serie and gaps
+                        selected_data_smooth_sex <- selected_data_smooth %>% filter(Sex == this_sex)
+                        chunks_data <- split(selected_data_smooth_sex$Date[selected_data_smooth_sex$Source!="WPP19"], 
+                                             cumsum(c(1, diff(selected_data_smooth_sex$Date[selected_data_smooth_sex$Source!="WPP19"]) >= 2)))
+                        main_data_time <- chunks_data[which(lengths(chunks_data)>5)] %>% unlist(.)
+                        years_gaps <- sort(dates_out[which(!(dates_out) %in% (main_data_time))])
+                        intervals_gaps <- split(years_gaps, cumsum(c(1, diff(years_gaps) != 1)))
+                        selection_gaps_sex[[this_sex]]$chunks_data <- chunks_data
+                        selection_gaps_sex[[this_sex]]$main_data_time <- main_data_time 
+                        selection_gaps_sex[[this_sex]]$years_gaps <- years_gaps
+                        selection_gaps_sex[[this_sex]]$intervals_gaps <- intervals_gaps
+                }
+                # redefine what is main because corners were cutted
+                lt_data <- lt_data %>% select(-Type) %>% 
+                        left_join(bind_rows(
+                                tibble(Sex = "f", Date = selection_gaps_sex[["f"]]$main_data_time, Type = "main"),
+                                tibble(Sex = "m", Date = selection_gaps_sex[["m"]]$main_data_time, Type = "main")),
+                                by = c("Date", "Sex")) %>% 
+                        mutate(Type = ifelse(is.na(Type), "add", Type))
         }
         
-        # bind results ------------------------------------------------------------
+        # loop over gaps and estimate a LC model -----------------------------------
+        # fill depending if the gaps are the same for both sex
+        if(all(selection_gaps_sex[["f"]]$years_gaps==selection_gaps_sex[["m"]]$years_gaps)){
+                intervals_gaps <- selection_gaps_sex[["f"]]$intervals_gaps
+                main_data_time <- selection_gaps_sex[["f"]]$main_data_time
+                if(length(intervals_gaps[[1]])!=0){
+                        final_data <- fill_intervals_gaps(intervals_gaps, main_data_time,
+                                                          lt_data, 
+                                                          first_year, last_year,
+                                                          Empirical_LT_LeeCarter_time_window_fit_Limited_LC,
+                                                          Empirical_LT_LeeCarter_time_window_fit_LC,
+                                                          Empirical_LT_LeeCarter_non_divergent,
+                                                          Empirical_LT_LeeCarter_jump_off,
+                                                          Empirical_LT_LeeCarter_fit_e0,
+                                                          Single = Single_first)        
+                }else{
+                        final_data <- lt_data
+                }
+        }else{
+                intervals_gaps_f <- selection_gaps_sex[["f"]]$intervals_gaps
+                main_data_time_f <- selection_gaps_sex[["f"]]$main_data_time
+                dates_this_sex <- lt_data %>% filter(Sex=="f") %>% count(Date) %>% pull(Date)
+                if(length(intervals_gaps_f)!=0){
+                        final_data_f <- fill_intervals_gaps(intervals_gaps_f, main_data_time_f,
+                                                          rbind(lt_data %>% filter(Sex=="f"),
+                                                                lt_data %>% filter(Sex=="f") %>% mutate(Sex="m")) %>% 
+                                                                filter(Date %in% dates_this_sex), 
+                                                          first_year, last_year,
+                                                          Empirical_LT_LeeCarter_time_window_fit_Limited_LC,
+                                                          Empirical_LT_LeeCarter_time_window_fit_LC,
+                                                          Empirical_LT_LeeCarter_non_divergent = FALSE,
+                                                          Empirical_LT_LeeCarter_jump_off,
+                                                          Empirical_LT_LeeCarter_fit_e0,
+                                                          Single = Single_first) %>% filter(Sex=="f")   
+                }else{
+                        final_data_f <- lt_data %>% filter(Sex=="f")
+                }
+                intervals_gaps_m <- selection_gaps_sex[["m"]]$intervals_gaps
+                main_data_time_m <- selection_gaps_sex[["m"]]$main_data_time
+                dates_this_sex <- lt_data %>% filter(Sex=="m") %>% count(Date) %>% pull(Date)
+                if(length(intervals_gaps_m)!=0){
+                        final_data_m <- fill_intervals_gaps(intervals_gaps_m, main_data_time_m,
+                                                          rbind(lt_data %>% filter(Sex=="m"),
+                                                                lt_data %>% filter(Sex=="m") %>% mutate(Sex="f")) %>% 
+                                                          filter(Date %in% dates_this_sex), 
+                                                          first_year, last_year,
+                                                          Empirical_LT_LeeCarter_time_window_fit_Limited_LC,
+                                                          Empirical_LT_LeeCarter_time_window_fit_LC,
+                                                          Empirical_LT_LeeCarter_non_divergent = FALSE,
+                                                          Empirical_LT_LeeCarter_jump_off,
+                                                          Empirical_LT_LeeCarter_fit_e0,
+                                                          Single = Single_first)  %>% filter(Sex=="m")      
+                }else{
+                        final_data_m <- lt_data %>% filter(Sex=="m")
+                }
+                final_data <- rbind(final_data_f, final_data_m)
+        }
         
-        # final data recovering inputs from LC-Lim
-        final_data <- bind_rows(lt_data %>% filter(Type == ifelse(is.null(main_data_time),"add","main"), Date>=first_year),
-                                gap_before_data,
-                                gap_middle_data %>% mutate(Type = "LC-Lim", Source = "LC-Lim"),
-                                gap_after_data) %>% 
-                        left_join(lt_data %>% filter(Type=="add") %>% 
-                                distinct(Date,Source) %>% rename(Source2=Source),
-                                by = "Date") %>%
-                        mutate(Source = ifelse(!is.na(Source2),Source2,Source)) %>% 
-                        select(-Source2, -Type) %>% 
-                        filter(Source!="WPP19")
-        # plot_ex_time(final_data,country = "pepe")
+        # get only dates_out
+        final_data <- final_data %>% filter(Date %in% dates_out)
         
-        # empirical smoothing -----------------------------------------------------
+        # graduate to complete in case is abr -----------------------------------------------------------------------
+
+        if(Age_Specific_Mortality_Input_Data == "abridged"){
+                final_data_abr <- final_data %>% 
+                        split(list(.$Sex, .$Date), drop = T) %>% 
+                        lapply(function(X){
+                                print(paste0(unique(X$Sex),"-", unique(X$Date)))
+                                # X <- final_data %>% filter(Date==2007.5,Sex=="f")
+                                X_sex <- unique(X$Sex)
+                                X_ages <- X$Age
+                                # for some reason realted to initial values in optimization, some few country-year-sex abridged lt don´t converge. Try 5 times. The last one with Makeham
+                                LT <- NULL
+                                attempt <- 1
+                                while(is.null(LT) && attempt<=5) {
+                                        if(attempt<5){
+                                                try(
+                                                        LT <- lt_abridged2single(nMx = X$nMx,
+                                                                                 Age = X_ages,
+                                                                                 Sex = X_sex)
+                                                )
+                                        }else{
+                                                try(
+                                                        LT <- lt_abridged2single(nMx = X$nMx,
+                                                                             Age = X_ages,
+                                                                             Sex = X_sex,extrapLaw = "Makeham")
+                                                        )
+                                                log_print(paste0("Warning: Year ",unique(X$Date)," was graduated to single age using Makeham instead of Kannisto for not producing an error."))
+                                        }
+                                        attempt <- attempt + 1
+                                } 
+                                # if is not possible to graduate
+                                if(is.null(LT)){
+                                        stop(paste0("Error with year ",unique(X$Date),". It is very irregular for graduating to complete."))
+                                        log_print(paste0("Error with year ",unique(X$Date),". It is very irregular for graduating to complete."))
+                                }
+                                LT$Date <- as.numeric(unique(X$Date))
+                                LT$Type <- unique(X$Type)
+                                LT$Source <- unique(X$Source)
+                                LT$DataProcess <- unique(X$DataProcess)
+                                LT$Sex  <- X_sex
+                                return(LT)
+                        }) %>% 
+                        bind_rows()
+                final_data <- final_data_abr
+        }
+
+        # output smoothing -----------------------------------------------------
 
         final_data_smooth <- final_data %>% 
                 split(.$Sex) %>% 
                 lapply(function(X){
-                        # X <- final_data %>% filter(Sex=="f")
+                        # X <- final_data %>% filter(Sex=="m")
                         X_sex <- unique(X$Sex)
                         X_Ages <- unique(X$Age)
                         X_Years <- first_year:last_year
@@ -507,27 +560,35 @@ fill_gaps_lt <- function(country_db = NULL,
                                 arrange(Date,Age) %>% 
                                 pivot_wider(names_from = Date, values_from = nMx)   %>% 
                                 select(-Age) %>% as.matrix()
-                        # exposed from wpp19
+                        # exposed from wpp19: only to 2019. take 2020 as same just for smoothing
                         E <- pop %>%
-                                select(Age=AgeGrpStart, Date=MidPeriod, E=m) %>% 
+                                select(Age=AgeStart, Date=Year, E=this_sex) %>% 
                                 mutate(E = E * 1000) %>% 
                                 arrange(Date,Age) %>% 
                                 pivot_wider(names_from = Date, values_from = E)   %>% 
-                                select(-Age) %>% as.matrix()
+                                select(-Age) %>% 
+                                mutate(`2020.5` = `2019.5`) %>% as.matrix()
                         # add 1 exposure in case 0
                         E[E==0] <- 2 
                         # implicit deaths
                         if(!all(dim(E)==dim(M))){
-                                log_print(paste0("The sex ",X_sex," has different number of life tables than the other sex. Some data issue must be chekced."))
-                                stop(paste0("The sex ",X_sex," has different life tables than the other sex. Some data issue must be chekced."))
+                                log_print(paste0("The sex ",X_sex," comes to output smoothing with less years that it should. Some data issue must be checked."))
+                                stop(paste0("The sex ",X_sex," comes to output smoothing with less years that it should. Some data issue must be checked."))
                         }
                         D <- M * E
                         # model options
                         # StMoMo - APC model
                         APC <- StMoMo::apc()
-                        APCfit <- StMoMo::fit(APC, Dxt =D, Ext = E, ages = X_Ages, 
-                                              years=X_Years, verbose = FALSE)
-                        M_smooth_APC <- fitted(APCfit, type = "rates") 
+                        APCfit <- try(StMoMo::fit(APC, Dxt =D, Ext = E, ages = X_Ages, 
+                                              years=X_Years, verbose = FALSE))
+                        if("try-error" %in% class(APCfit)){
+                                M_smooth_APC <- cbind(M[,1],t(apply(M,1,zoo::rollmean,k=3)),M[,ncol(M)])
+                                colnames(M_smooth_APC) <- as.character(dates_out)
+                                log_print(paste0("StMomo gave an error because of irregular mortality patterns by age in sex ",X_sex,
+                                                 ". It was reaplaced by a 3-year moving average on time"))
+                        }else{
+                                M_smooth_APC <- fitted(APCfit, type = "rates") 
+                        }
                         M_hat_APC <- M_smooth_APC %>% 
                                         as.data.frame() %>% 
                                         mutate(Age = X_Ages) %>% 
@@ -535,7 +596,7 @@ fill_gaps_lt <- function(country_db = NULL,
                                         mutate(Sex = X_sex)
                         LT_hat_APC <- M_hat_APC %>% split(.$Date) %>% 
                                         lapply(function(Y){
-                                                # Y = M_hat %>% filter(Date == 1950)
+                                                # Y = M_hat_APC %>% filter(Date == 1950.5)
                                                 LT_hat <- lt_single_mx(nMx = Y$nMx, Age = Y$Age, 
                                                                        Sex = unique(Y$Sex), extrapFrom = OAnew)
                                                 LT_hat$Sex <- unique(Y$Sex)
@@ -548,12 +609,14 @@ fill_gaps_lt <- function(country_db = NULL,
                         # sometimes error in optimization. return un-smoothed matrix and give log message
                         fit2D <- try(MortalitySmooth::Mort2Dsmooth(x=X_Ages, y=X_Years, Z=D, 
                                                                    offset=log(E), method = 1))
-                        M_smooth_MS <- try(exp(fit2D$logmortality))
                         if("try-error" %in% class(fit2D)){
                                 fit2D <- log(cbind(M[,1],t(apply(M,1,zoo::rollmean,k=3)),M[,ncol(M)]))
                                 M_smooth_MS <- exp(fit2D)
                                 colnames(M_smooth_MS) <- as.character(dates_out)
-                                log_print("MortalitySmooth gave an error. It was reaplaced by a 3-year moving average on time")
+                                log_print(paste0("MortalitySmooth gave an error because of irregular mortality patterns by age in sex ",X_sex,
+                                          ". It was reaplaced by a 3-year moving average on time"))
+                        }else{
+                                M_smooth_MS <- exp(fit2D$logmortality)
                         }
                         M_hat_MS <- M_smooth_MS %>% 
                                 as.data.frame() %>% 
@@ -577,18 +640,26 @@ fill_gaps_lt <- function(country_db = NULL,
                 left_join(final_data %>% select(Age, Date, Sex, Source, DataProcess), by = c("Age", "Sex", "Date"))
         
         # return what was selected in InputFiles
-        if(Empirical_LT_smoothing == "APC" | isTRUE(Empirical_LT_smoothing)){     
+        if(Empirical_LT_smoothing_output == "apc" | isTRUE(Empirical_LT_smoothing_output)){     
                 final_LT <- final_data_smooth %>% filter(Model == "APC") %>% select(-Model)
-        }else if(Empirical_LT_smoothing == "AP"){
+        }else if(Empirical_LT_smoothing_output == "ap"){
                 final_LT <- final_data_smooth %>% filter(Model == "AP") %>% select(-Model)
         }else{
                 final_LT <- final_data
         }
 
-
-        # add mort crisis ---------------------------------------------------------
+        # add mort crisis on the top ---------------------------------------------------------
+        mort_inputs$adjust_crisis_true <- as.logical(pmin(1,
+                                mort_inputs$adjust_conflict_mortality+
+                                mort_inputs$adjust_disasters_mortality+
+                                mort_inputs$adjust_COVID19_mortality))
+        
         final_data_mc <- final_LT %>% 
-                left_join(mort_crises %>% select(Date=TimeMid, Age=age_start, Sex=Sex, value),
+                left_join(mort_crises %>%
+                                  left_join(mort_inputs %>% select(time_start, sex, adjust_crisis_true),
+                                            by = c("time_start", "sex")) %>% 
+                                  filter(adjust_crisis_true) %>% 
+                                  select(Date=TimeMid, Age=age_start, Sex=Sex, value),
                           by = c("Age", "Date", "Sex")) %>% 
                 split(list(.$Date, .$Sex), drop = T) %>% 
                 lapply(function(X){
@@ -609,22 +680,6 @@ fill_gaps_lt <- function(country_db = NULL,
                         distinct(TimeLabel, IndicatorID, IndicatorName, SeriesID, DataSourceShortName),
                           by = c("DataSourceShortName", "TimeLabel", "IndicatorName"))
         
-        # tables for writing in InputFiles fromat
-        life_table_age_sex <- 
-                final_data_mc %>% 
-                pivot_longer(cols = nMx:ex,names_to = "indicator", values_to = "value") %>% 
-                mutate(indicator = paste0("lt_",indicator),
-                       sex = ifelse(Sex == "f", "female", "male"),
-                       time_start = trunc(Date),
-                       time_span = 1,
-                       age_span = ifelse(Age == OAnew,1000,1)) %>% 
-                select(indicator,time_start,time_span,sex,age_start=Age,age_span,value) %>% 
-                arrange(indicator, time_start, sex, age_start)
-        
-        dd_selected_series <- selected_data_series %>% 
-                mutate(Status = "Used", SeriesKey = as.character(SeriesID)) %>% 
-                select(IndicatorID, SeriesKey, Status)
-        
         # abridged output
         final_data_mc_abr <- final_data_mc %>% 
                 split(list(.$Date, .$Sex), drop = T) %>% 
@@ -642,10 +697,40 @@ fill_gaps_lt <- function(country_db = NULL,
                         LT
                 }) %>% bind_rows()
 
+        # tables for writing in InputFiles fromat
+        life_table_age_sex <- 
+                final_data_mc %>% 
+                pivot_longer(cols = nMx:ex,names_to = "indicator", values_to = "value") %>% 
+                mutate(indicator = paste0("lt_",indicator),
+                       sex = ifelse(Sex == "f", "female", "male"),
+                       time_start = trunc(Date),
+                       time_span = 1,
+                       age_span = ifelse(Age == OAnew,1000,1)) %>% 
+                select(indicator,time_start,time_span,sex,age_start=Age,age_span,value) %>% 
+                arrange(indicator, time_start, sex, age_start)
+        
+        life_table_age_sex_abridged <- 
+                final_data_mc_abr %>% 
+                pivot_longer(cols = nMx:ex,names_to = "indicator", values_to = "value") %>% 
+                mutate(indicator = paste0("lt_",indicator),
+                       sex = ifelse(Sex == "f", "female", "male"),
+                       time_start = trunc(Date),
+                       time_span = 1,
+                       age_span = ifelse(Age == 0, 1, 
+                                         ifelse(Age==1, 4, 
+                                                ifelse(Age==OAnew, 1000, 5)))) %>% 
+                select(indicator,time_start,time_span,sex,age_start=Age,age_span,value) %>% 
+                arrange(indicator, time_start, sex, age_start)
+        
+        dd_selected_series <- selected_data_series %>% 
+                mutate(Status = "Used", SeriesKey = as.character(SeriesID)) %>% 
+                select(IndicatorID, SeriesKey, Status)
+        
         # final output
         out <- list(
                 name = country_full,
                 input_data = country_data,
+                old_age_adj_data = old_age_adj_data,
                 selected_data = selected_data_series, 
                 output_data = final_data_mc,
                 output_data_abr = final_data_mc_abr,
@@ -654,7 +739,7 @@ fill_gaps_lt <- function(country_db = NULL,
                 error_data = country_data_errors,
                 gaps = intervals_gaps,
                 life_table_age_sex = life_table_age_sex,
+                life_table_age_sex_abridged = life_table_age_sex_abridged,
                 dd_selected_series = dd_selected_series)
         return(out)
 }
-

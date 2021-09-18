@@ -29,10 +29,12 @@
         # XXX_Mx5_XEstimates-Sex-Ratios-Age-Profiles
 
 # gral function for naming and wirting plots as svg
-write_plots <- function(dir_plots, output, smoothing = FALSE, dir_HMD){
+write_plots <- function(dir_plots, output, smoothing = "None", dir_HMD, complete_abridged){
         
         # rename
-        # load("GlobalFiles/HKG_output.Rdata")
+        # load("LifeTables/AuxFiles/BRA_output.Rdata")
+        # dir_HMD <- "LifeTables/AuxFiles"
+        # dir_plots <- "WPP2021_plots"
         name_code = output$name$Code_iso
         name = output$name$Name
         t_final_data = output$output_data
@@ -41,7 +43,8 @@ write_plots <- function(dir_plots, output, smoothing = FALSE, dir_HMD){
         data_pre_smooth = output$data_pre_smooth
         data_with_smooth = output$data_with_smooth
         country_data5 = output$output_data_abr
-        
+        post_old_age_adj <- output$old_age_adj_data
+                
         # data form HMD for comparisons
         if(file.exists(file.path(dir_HMD,"HMD_data.Rdata"))){
                 load(file.path(dir_HMD,"HMD_data.Rdata"))
@@ -127,16 +130,24 @@ write_plots <- function(dir_plots, output, smoothing = FALSE, dir_HMD){
         svg(file.path(dir_plots,paste0(name_code,"_Mx5_XEstimates-Sex-Ratios-Age-Profiles.svg")), width=22*.9, height=12*.9)
         print(plot_trends5(name, country_data5,x="sex_ratio_age5"))
         dev.off()
+        if(complete_abridged == "Abridged"){
+                svg(file.path(dir_plots,paste0(name_code,"_Mx5_XEstimates-Old-Ages-Time-Trend.svg")), width=22*.9, height=12*.9)
+                print(plot_old_age(name, country_data, post_old_age_adj, selected_data))
+                dev.off()        
+        }
 }
 
 # plot available and selected data
 plot_data_selected <- function(name, data, selected_data, country=NULL){
-
+        
         personal_theme = theme(plot.title = element_text(hjust = 0.5),
                                text = element_text(size = 16),
-                               plot.margin=grid::unit(c(0,0,0,0), "mm"))
+                               plot.margin=grid::unit(c(0,0,0,0), "mm"),
+                               plot.caption = element_text(color = 1, face = "italic", size=11))
         data <- data %>% filter(!str_detect(IndicatorName,"a\\(x"),
                                 str_detect(IndicatorName, "\\(x"))
+        selected_data_f <- selected_data %>% filter(SexName=="f")
+        selected_data_m <- selected_data %>% filter(SexName=="m")
         data$IndicatorName <- factor(data$IndicatorName)
         dodge <- position_dodge(width=0.5)
         data %>% distinct(IndicatorName,DataSourceShortName,TimeMid) %>% 
@@ -150,15 +161,21 @@ plot_data_selected <- function(name, data, selected_data, country=NULL){
                                    labels = seq(1940,2020,10))+
                 geom_vline(xintercept = c(1950,2020),linetype=2)+
                 theme_bw()+
-                labs(y="Data Source") +
+                labs(y="Data Source", caption = Sys.time()) +
                 annotate("segment",
-                                 x = selected_data$TimeMid[-nrow(selected_data)],
-                                 xend = selected_data$TimeMid[-1],
-                                 y = selected_data$DataSourceShortName[-nrow(selected_data)],
-                                 yend = selected_data$DataSourceShortName[-1],
-                                 size=3, alpha=0.2) +
-                        ggtitle(label = paste0("Source data from ",name),
-                                subtitle = "Selected data with a line") +
+                                 x = selected_data_f$TimeMid[-nrow(selected_data_f)],
+                                 xend = selected_data_f$TimeMid[-1],
+                                 y = selected_data_f$DataSourceShortName[-nrow(selected_data_f)],
+                                 yend = selected_data_f$DataSourceShortName[-1],
+                                 size=3, alpha=0.2, col=2) +
+                annotate("segment",
+                                 x = selected_data_m$TimeMid[-nrow(selected_data_m)],
+                                 xend = selected_data_m$TimeMid[-1],
+                                 y = selected_data_m$DataSourceShortName[-nrow(selected_data_m)],
+                                 yend = selected_data_m$DataSourceShortName[-1],
+                                 size=3, alpha=0.2, col=4) +
+                ggtitle(label = paste0("Source data from ",name),
+                        subtitle = "Selected data with a line") +
                 personal_theme
 }
 
@@ -173,7 +190,8 @@ plot_comparison <- function(name, country_data, HMD_data,x = NULL){
         # my theme
         personal_theme <- theme(plot.title = element_text(hjust = 0.5),
                                text = element_text(size = 16),
-                               plot.margin=grid::unit(c(0,0,0,0), "mm"))
+                               plot.margin=grid::unit(c(0,0,0,0), "mm"),
+                               plot.caption = element_text(color = 1, face = "italic", size=11))
         
      if(x=="e0&e60&e80"){
           data_plot <- HMD_data %>% 
@@ -187,7 +205,7 @@ plot_comparison <- function(name, country_data, HMD_data,x = NULL){
                   geom_line(col=1, size = .3)+
                   geom_point(aes(color=`Source/Method`,shape=`Source/Method`))+
                   theme_bw()+
-                  labs(x="Year",y=TeX("$e_x$")) +
+                  labs(x="Year",y=TeX("$e_x$"), caption = Sys.time()) +
                   scale_x_continuous(breaks = seq(1950,2020,10), 
                                      labels = seq(1950,2020,10))+
                   facet_grid(rows = vars(Age), 
@@ -211,7 +229,7 @@ plot_comparison <- function(name, country_data, HMD_data,x = NULL){
                         scale_x_continuous(breaks = seq(1950,2020,10), 
                                            labels = seq(1950,2020,10))+
                         scale_y_continuous(labels = comma)+
-                        labs(x="Year",y=TeX("$q_0$")) +
+                        labs(x="Year",y=TeX("$q_0$"), caption = Sys.time()) +
                         facet_grid(cols = vars(Sex))+
                         ggtitle(TeX(paste0("Infant Mortality ($q_0$). HMD and ", name))) +
                         personal_theme
@@ -232,7 +250,7 @@ plot_comparison <- function(name, country_data, HMD_data,x = NULL){
                         scale_x_continuous(breaks = seq(1950,2020,10), 
                                            labels = seq(1950,2020,10))+
                         scale_y_continuous(labels = comma)+
-                        labs(x="Year",y=TeX("${}_5q_0$")) +
+                        labs(x="Year",y=TeX("${}_5q_0$"), caption = Sys.time()) +
                         facet_grid(cols = vars(Sex))+
                         ggtitle(TeX(paste0("Child mortality (${}_5q_0$). HMD and ", name))) +
                         personal_theme
@@ -257,7 +275,7 @@ plot_comparison <- function(name, country_data, HMD_data,x = NULL){
                         scale_y_log10(labels = comma) +
                         scale_x_log10(labels = comma) +
                         theme(legend.position="bottom")+
-                        labs(x=TeX("${}_1q_0$"),y=TeX("${}_4q_1$")) +
+                        labs(x=TeX("${}_1q_0$"),y=TeX("${}_4q_1$"), caption = Sys.time()) +
                         facet_grid(cols = vars(Sex)) +
                         ggtitle(paste0("infant and child mortality. HMD and ", name,". Log-scales")) +
                         personal_theme
@@ -277,7 +295,7 @@ plot_comparison <- function(name, country_data, HMD_data,x = NULL){
                         theme_bw()+
                         scale_y_continuous(labels = comma)+
                         theme(legend.position="bottom")+
-                        labs(x="Year",y=TeX("${}_{45}q_{15}$")) +
+                        labs(x="Year",y=TeX("${}_{45}q_{15}$"), caption = Sys.time()) +
                         scale_x_continuous(breaks = seq(1950,2020,10), 
                                            labels = seq(1950,2020,10))+
                         facet_grid(cols = vars(Sex))+
@@ -305,7 +323,7 @@ plot_comparison <- function(name, country_data, HMD_data,x = NULL){
                         scale_y_log10(labels = comma) +
                         scale_x_log10(labels = comma) +
                         theme(legend.position="bottom")+
-                        labs(x=TeX("${}_5q_0$"),y=TeX("${}_45q_15$")) +
+                        labs(x=TeX("${}_5q_0$"),y=TeX("${}_45q_15$"), caption = Sys.time()) +
                         facet_grid(cols = vars(Sex),
                                    scales = "free_y", space = "free",switch = "y")+
                         ggtitle(paste0("Child and Young-Adult mortality. HMD and ", name,". Log-scales")) +
@@ -333,7 +351,7 @@ plot_comparison <- function(name, country_data, HMD_data,x = NULL){
                         theme_bw()+
                         scale_x_continuous(labels = comma)+
                         theme(legend.position="bottom")+
-                        labs(x=TeX("${}_{45}q_{15}$"),y=TeX("$e_{60}$")) +
+                        labs(x=TeX("${}_{45}q_{15}$"),y=TeX("$e_{60}$"), caption = Sys.time()) +
                         facet_grid(cols = vars(Sex),
                                    scales = "free_y")+
                         ggtitle(paste0("45q15 and e60. HMD and ", name)) +
@@ -361,7 +379,7 @@ plot_comparison <- function(name, country_data, HMD_data,x = NULL){
                         theme_bw()+
                         scale_x_continuous(labels = comma)+
                         theme(legend.position="bottom")+
-                        labs(x=TeX("${}_{45}q_{15}$"),y=TeX("$e_{80}$")) +
+                        labs(x=TeX("${}_{45}q_{15}$"),y=TeX("$e_{80}$"), caption = Sys.time()) +
                         facet_grid(cols = vars(Sex),
                                    scales = "free_y")+
                         ggtitle(paste0("45q15 and e80. HMD and ", name)) +
@@ -371,7 +389,7 @@ plot_comparison <- function(name, country_data, HMD_data,x = NULL){
 }
 
 # plot time series trends
-plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL, smoothing=FALSE){
+plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL, smoothing="None"){
         # set some vars
         
         country_data <- country_data %>% 
@@ -382,7 +400,8 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
         # my theme
         personal_theme <- theme(plot.title = element_text(hjust = 0.5),
                                 text = element_text(size = 16),
-                                plot.margin=grid::unit(c(0,0,0,0), "mm"))
+                                plot.margin=grid::unit(c(0,0,0,0), "mm"),
+                                plot.caption = element_text(color = 1, face = "italic", size=11))
         
         if(x=="ex_gap"){
                 gg <- ggplot(data = country_data %>% 
@@ -395,7 +414,7 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
                              aes(x=Date,y=Value)) + 
                         # geom_line(col="grey")+
                         geom_point(aes(col=Sex,shape=`Source/Method`)) +
-                        labs(y=TeX("$e_{x}$"),x="Year")+
+                        labs(y=TeX("$e_{x}$"),x="Year", caption = Sys.time())+
                         theme_bw()+
                         scale_x_continuous(breaks = seq(1950,2020,10), 
                                            labels = seq(1950,2020,10))+
@@ -411,7 +430,7 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
                        aes(x=Date,y=ex)) + 
                         geom_line(col="grey")+
                         geom_point(aes(col=`Source/Method`,shape=`Source/Method`)) +
-                        labs(y=TeX("$e_{x}$"),x="Year")+
+                        labs(y=TeX("$e_{x}$"),x="Year", caption = Sys.time())+
                         theme_bw()+
                         scale_x_continuous(breaks = seq(1950,2020,10), 
                                            labels = seq(1950,2020,10))+
@@ -423,22 +442,20 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
         }
         if(x=="mx_time"){
                 country_data <- country_data %>% 
-                        mutate(label = ifelse(Age %in% c(0,5,10,15,20,30,40,50,60,70,80,90,100) & Date == 1950.5, Age,""),
-                               Age = as.factor(Age))
+                        mutate(label = ifelse(Age %in% c(0,5,10,15,20,30,40,50,60,70,80,90,100) & Date == 1950.5, Age,""))
 
                 gg <- ggplot(data = country_data,
                              aes(x=Date,y=nMx,
-                                 col=Age, label=label)) + 
+                                 col=Age, group=Age,label=label)) + 
                         geom_line() +
                         ggrepel::geom_text_repel(size=3, col="blue4",
                                                  seed = 42, box.padding = 0.5,
                                                  min.segment.length = 0, segment.color="blue4",max.overlaps = Inf,
                                                  point.size = NA) +
                         scale_y_log10(labels = comma)+
-                        scale_colour_viridis_d(option = "B")+
-                        labs(y=TeX("$log({}_nm_{x})$"))+
+                        scale_colour_viridis_c(option = "B")+
+                        labs(y=TeX("$log({}_nm_{x})$"), caption = Sys.time())+
                         theme_bw()+
-                        theme(legend.position="none")+
                         labs(colour="Age", x="Year")+
                         scale_x_continuous(breaks = seq(1950,2020,10), 
                                            labels = seq(1950,2020,10))+
@@ -448,24 +465,23 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
         }
         if(x=="mx_age"){
                 country_data <- country_data %>% 
-                        mutate(label = ifelse(Date %in% seq(1950.5,2020.5,10) & Age == 50, floor(Date),""),
+                        mutate(label = ifelse(Date %in% seq(1950.5,2020.5,5) & Age == 50, floor(Date),""),
                                Age = as.numeric(Age)) %>% 
                         select(Age, Date, nMx, Sex, label)
                 gg <- ggplot(data = country_data,
                              aes(x=Age,y=nMx,
-                                 col=factor(Date), label=label)) + 
+                                 col=Date, group=Date,label=label)) + 
                         geom_line() +
                         ggrepel::geom_text_repel(size=3, col="blue4",
                                                  seed = 42, box.padding = 0.5,
                                                  min.segment.length = 0, segment.color="blue4",max.overlaps = Inf,
                                                  point.size = NA) +
                         scale_y_log10(labels = comma)+
-                        scale_colour_viridis_d(option = "B")+
-                        labs(y=TeX("${}_nm_{x}$"),colour="Year")+
+                        scale_colour_viridis_c(option = "B")+
+                        labs(y=TeX("${}_nm_{x}$"),colour="Year", caption = Sys.time())+
                         theme_bw()+
                         scale_x_continuous(breaks = seq(0,100,10),
                                            labels = seq(0,100,10))+
-                        theme(legend.position="none")+
                         facet_grid(~Sex)+
                         ggtitle(paste0("Mortality rates by age with time. ",name)) + 
                         personal_theme
@@ -481,7 +497,7 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
                                              labels = comma) +
                         coord_equal()+
                         theme_bw()+
-                        labs(fill="Mortality rate\n(log colors)", x="Year")+
+                        labs(fill="Mortality rate\n(log colors)", x="Year", caption = Sys.time())+
                         scale_y_continuous(name ="Age",
                                            breaks = seq(0,100,10), 
                                            labels = seq(0,100,10))+
@@ -489,26 +505,29 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
                                            labels = seq(1950,2020,10))+
                         facet_grid(~Sex)+
                         ggtitle(paste0("Lexis surface of mortality rates. ",name)) +
-                        personal_theme
+                        personal_theme +
+                        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
         }
         if(x=="sex_ratio_time"){
-                data_sr <- country_data %>% select(Date, `Source/Method`,Age, Sex, nMx) %>% 
+                data_sr <- country_data %>% 
+                        select(Date, `Source/Method`,Age, Sex, nMx) %>% 
                         pivot_wider(names_from = Sex, values_from = nMx) %>% 
-                        mutate(rat = pmin(Male/Female,5))
-                to_label <- data_sr %>% filter(Age %in% seq(0,100,10), 
-                                                    Date == 1950.5) %>% select(Age, Date, rat)
+                        mutate(rat = pmin(Male/Female,5),
+                               label = ifelse(Age %in% c(0,5,10,15,20,30,40,50,60,70,80,90,100) & Date == 1950.5, Age,""))
                 gg <- ggplot(data_sr, aes(x=as.numeric(Date),y=rat,
-                                          col=factor(Age))) + 
+                                          col=Age,group=Age,label=label)) + 
                         geom_line() +
                         geom_hline(yintercept = 1,linetype=2)+
-                        scale_colour_viridis_d(option = "D")+
+                        scale_colour_viridis_c(option = "B")+
+                        ggrepel::geom_text_repel(size=3, col="blue4",
+                                                 seed = 42, box.padding = 0.5,
+                                                 min.segment.length = 0, segment.color="red",max.overlaps = Inf,
+                                                 point.size = NA) +
                         theme_bw()+
-                        labs(colour="Age", x="Year",y="M/F ratio")+
+                        labs(colour="Age", x="Year",y="M/F ratio", caption = Sys.time())+
                         scale_x_continuous(breaks = seq(1950,2020,10), 
                                            labels = seq(1950,2020,10))+
-                        theme(legend.position="none")+
                         ggtitle(TeX(paste0("Time trend of sex ratio of mortality rates (male/female). ",name))) +
-                        geom_text(data = to_label,aes(x=Date,y=rat,label = floor(Age)), color="blue", size=3) +
                         personal_theme
         }
         if(x=="sex_ratio_age"){
@@ -520,20 +539,19 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
 
                 gg <-ggplot(data = data_sr,
                             aes(x=Age,y=rat,
-                                col=factor(Date), label=label)) + 
+                                col=Date, group = Date, label=label)) + 
                         geom_line() +
                         ggrepel::geom_text_repel(size=3, col="blue4",
                                                  seed = 42, box.padding = 0.5,
                                                  min.segment.length = 0, segment.color="blue4",max.overlaps = Inf,
                                                  point.size = NA) +
                         geom_hline(yintercept = 1,linetype=2)+
-                        scale_colour_viridis_d(option = "A")+
+                        scale_colour_viridis_c(option = "A")+
                         theme_bw()+
-                        labs(y="M/F ratio")+
+                        labs(y="M/F ratio", caption = Sys.time())+
                         scale_x_continuous(name ="Age",
                                            breaks = seq(0,100,10), 
                                            labels = seq(0,100,10))+
-                        theme(legend.position="none")+
                         ggtitle(paste0("Sex ratio (male/female) of mortality rates by age with time. ",name)) +
                         personal_theme
                 
@@ -552,11 +570,12 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
                                            labels = seq(0,100,10))+
                         scale_x_continuous(breaks = seq(1950,2020,10), 
                                            labels = seq(1950,2020,10))+
-                        labs(x="Year", fill="M/F ratio")+
+                        labs(x="Year", fill="M/F ratio", caption = Sys.time())+
                         coord_equal()+
                         theme_bw()+
                         ggtitle(paste0("Lexis surface of sex ratio of mortality rates (male/female). ",name)) +
-                        personal_theme
+                        personal_theme +
+                        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
         }
         if(x == "ex_smooth"){
                 country_data_compare <- bind_rows(
@@ -565,14 +584,14 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
                                                         Sex = factor(Sex, levels=c("m","f"), labels = c("Male","Female")))) %>% 
                                 mutate(Smooth = as.factor(Smooth))
                 
-                selected_smoothing = ifelse(as.logical(smoothing) | smoothing == "APC","APC", 
-                                            ifelse(smoothing == "AP", "AP", "Not Smoothed")) 
+                selected_smoothing = ifelse(tolower(smoothing) == "apc","APC", 
+                                            ifelse(tolower(smoothing) == "ap", "AP", "Not smoothed in output")) 
                 
                 gg <- ggplot(data = country_data_compare %>% filter(Age%in%c(0,60,80)),
                        aes(x=Date,y=ex)) + 
                         geom_line(aes(col=Smooth))+
                         geom_point(aes(col=Smooth,shape=Smooth)) +
-                        labs(y=TeX("$e_{x}$"),x="Year")+
+                        labs(y=TeX("$e_{x}$"),x="Year", caption = Sys.time())+
                         theme_bw()+
                         scale_x_continuous(breaks = seq(1950,2020,10), 
                                            labels = seq(1950,2020,10))+
@@ -591,8 +610,8 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
                                                        Sex = factor(Sex, levels=c("m","f"), labels = c("Male","Female")))) %>% 
                         mutate(Smooth = as.factor(Smooth))
                 
-                selected_smoothing = ifelse(as.logical(smoothing) | smoothing == "APC","APC", 
-                                            ifelse(smoothing == "AP", "AP", "Not Smoothed")) 
+                selected_smoothing = ifelse(tolower(smoothing) == "apc","APC", 
+                                            ifelse(tolower(smoothing) == "ap", "AP", "Not smoothed in output")) 
                 
                 my_breaks = 10^seq(0,-7,by = -.5)
                 gg <- country_data_compare %>% 
@@ -604,7 +623,7 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
                                              labels = comma) +
                         coord_equal()+
                         theme_bw()+
-                        labs(fill="Mortality rate\n(log colors)", x="Year")+
+                        labs(fill="Mortality rate\n(log colors)", x="Year", caption = Sys.time())+
                         scale_y_continuous(name ="Age",
                                            breaks = seq(0,100,10), 
                                            labels = seq(0,100,10))+
@@ -614,7 +633,8 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
                         ggtitle(paste0("Smoothed/Not Smoothed Lexis surface of mortality rates. ",name),
                                 subtitle = paste0("Selected: ", selected_smoothing," (excluding mortality crises)")) +
                         theme(plot.subtitle = element_text(color = "red")) +
-                        personal_theme 
+                        personal_theme  +
+                        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
         }
         if(x=="mx_time_smooth"){
                 
@@ -624,24 +644,22 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
                                 mutate(Smooth = Model,
                                         Sex = factor(Sex, levels=c("m","f"), labels = c("Male","Female")))) %>% 
                         mutate(Smooth = as.factor(Smooth),
-                               label = ifelse(Age %in% c(0,5,10,15,20,30,40,50,60,70,80,90,100) & Date == 1950.5, Age,""),
-                               Age = as.factor(Age))
+                               label = ifelse(Age %in% c(0,5,10,15,20,30,40,50,60,70,80,90,100) & Date == 1950.5, Age,""))
                 
-                selected_smoothing = ifelse(as.logical(smoothing) | smoothing == "APC","APC", 
-                                            ifelse(smoothing == "AP", "AP", "Not Smoothed")) 
+                selected_smoothing = ifelse(tolower(smoothing) == "apc","APC", 
+                                            ifelse(tolower(smoothing) == "ap", "AP", "Not smoothed in output")) 
                 
                 gg <- ggplot(data = country_data_compare,
                              aes(x=Date,y=nMx,
-                                 col=Age, label=label)) + 
+                                 col=Age, group=Age,label=label)) + 
                         geom_line() +
                         ggrepel::geom_text_repel(size=3, col="blue4",
                                                  seed = 42, box.padding = 0.5,
                                                  min.segment.length = 0, segment.color="blue4") +
                         scale_y_log10(labels = comma)+
-                        scale_colour_viridis_d(option = "B")+
-                        labs(y=TeX("$log({}_nm_{x})$"))+
+                        scale_colour_viridis_c(option = "B")+
+                        labs(y=TeX("$log({}_nm_{x})$"), caption = Sys.time())+
                         theme_bw()+
-                        theme(legend.position="none")+
                         labs(colour="Age", x="Year")+
                         scale_x_continuous(breaks = seq(1950,2020,10), 
                                            labels = seq(1950,2020,10))+
@@ -672,7 +690,8 @@ plot_trends5 <- function(name, country_data5, x = "ex"){
         # my theme
         personal_theme <- theme(plot.title = element_text(hjust = 0.5),
                                 text = element_text(size = 16),
-                                plot.margin=grid::unit(c(0,0,0,0), "mm"))
+                                plot.margin=grid::unit(c(0,0,0,0), "mm"),
+                                plot.caption = element_text(color = 1, face = "italic", size=11))
         if(x=="mx5_time"){
                 
                 country_data5_plot <- country_data5_plot %>% 
@@ -688,7 +707,7 @@ plot_trends5 <- function(name, country_data5, x = "ex"){
                                                  point.size = NA) +
                         scale_y_log10(labels = comma)+
                         scale_colour_viridis_d(option = "B")+
-                        labs(y=TeX("$log({}_nm_{x})$"))+
+                        labs(y=TeX("$log({}_nm_{x})$"), caption = Sys.time())+
                         theme_bw()+
                         theme(legend.position="none")+
                         labs(colour="Age", x="Year")+
@@ -703,11 +722,11 @@ plot_trends5 <- function(name, country_data5, x = "ex"){
         if(x=="mx5_age"){
                 
                 country_data5_plot <- country_data5_plot %>% 
-                        mutate(label = ifelse(Date %in% seq(1950.5,2020.5,10) & Age==30, floor(Date),""))
+                        mutate(label = ifelse(Date %in% seq(1950.5,2020.5,5) & Age==25, floor(Date),""))
                 
                 gg <- ggplot(data = country_data5_plot,
                              aes(x=Age_mean,y=nMx,
-                                 col=factor(Date), label=label)) + 
+                                 col=Date, group=Date,label=label)) + 
                         geom_line() +
                         geom_point() +
                         ggrepel::geom_text_repel(size=3, col="blue4",
@@ -715,13 +734,12 @@ plot_trends5 <- function(name, country_data5, x = "ex"){
                                                  min.segment.length = 0, segment.color="red",max.overlaps = Inf,
                                                  point.size = NA) +
                         scale_y_log10(labels = comma)+
-                        scale_colour_viridis_d(option = "B")+
-                        labs(y=TeX("$log({}_nm_{x})$"))+
+                        scale_colour_viridis_c(option = "B")+
+                        labs(y=TeX("$log({}_nm_{x})$"), caption = Sys.time())+
                         theme_bw()+
-                        labs(colour="Age", x="Year")+
+                        labs(colour="Year", x="Age")+
                         scale_x_continuous(breaks = seq(0,100,10),
                                            labels = seq(0,100,10))+
-                        theme(legend.position="none")+
                         facet_grid(~Sex)+
                         ggtitle(paste0("Time trend of mortality rates by 5-age. ",name)) + 
                         # geom_text(data = to_label5,aes(x=Age_mean,y=nMx,label = Date), color="blue", size=3) +
@@ -732,46 +750,106 @@ plot_trends5 <- function(name, country_data5, x = "ex"){
                 
                 data_sr <- country_data5_plot %>% select(Date,Age,Age_group, Sex, nMx) %>% 
                         pivot_wider(names_from = Sex, values_from = nMx) %>% 
-                        mutate(rat = pmin(Male/Female,5))
-                to_label <- data_sr %>% filter(Age %in% seq(0,100,10), 
-                                               Date == 1950.5) %>% select(Age_group, Date, rat)
+                        mutate(rat = pmin(Male/Female,5),
+                               label = ifelse(Date %in% 1950.5, as.character(Age_group),""))
                 gg <- ggplot(data_sr, aes(x=as.numeric(Date),y=rat,
-                                          col=Age_group)) + 
+                                          col=Age_group, label=label)) + 
                         geom_line() +
+                        ggrepel::geom_text_repel(size=3, col="blue4",
+                                                 seed = 42, box.padding = 0.5,
+                                                 min.segment.length = 0, segment.color="red",max.overlaps = Inf,
+                                                 point.size = NA)+
                         geom_hline(yintercept = 1,linetype=2)+
                         scale_colour_viridis_d(option = "D")+
                         theme_bw()+
-                        labs(colour="Age", x="Year",y="M/F ratio")+
+                        labs(colour="Age", x="Year",y="M/F ratio", caption = Sys.time())+
                         scale_x_continuous(breaks = seq(1950,2020,10), 
                                            labels = seq(1950,2020,10))+
                         theme(legend.position="none")+
                         ggtitle(TeX(paste0("Time trend of sex ratio of mortality 5-age rates (male/female). ",name))) +
-                        geom_text(data = to_label,aes(x=Date,y=rat,label = Age_group), color="blue", size=3) +
                         personal_theme
         }
         if(x=="sex_ratio_age5"){
                 
                 data_sr <- country_data5_plot %>% select(Date, Age,Age_mean, Sex, nMx) %>% 
                         pivot_wider(names_from = Sex, values_from = nMx) %>% 
-                        mutate(rat = pmin(Male/Female,5))
-                to_label <- data_sr %>% filter(Date %in% c(1950.5,1990.5,2020.5), 
-                                               Age == 40) %>% select(Age, Age_mean,Date, rat)
+                        mutate(rat = pmin(Male/Female,5),
+                               label = ifelse(Date %in% seq(1950.5,2020.5,5) & Age==25, floor(Date),""))
+                
                 gg <-ggplot(data = data_sr,
                             aes(x=Age_mean,y=rat,
-                                col=factor(Date))) + 
+                                col=Date,group=Date,label=label)) + 
                         geom_line() +
                         geom_point() +
+                        ggrepel::geom_text_repel(size=3, col="blue4",
+                                                 seed = 42, box.padding = 0.5,
+                                                 min.segment.length = 0, segment.color="blue4",max.overlaps = Inf,
+                                                 point.size = NA)+
                         geom_hline(yintercept = 1,linetype=2)+
-                        scale_colour_viridis_d(option = "A")+
+                        scale_colour_viridis_c(option = "A")+
                         theme_bw()+
-                        labs(y="M/F ratio")+
+                        labs(y="M/F ratio", color = "Year", caption = Sys.time())+
                         scale_x_continuous(name ="Age",
                                            breaks = seq(0,100,10), 
                                            labels = seq(0,100,10))+
-                        theme(legend.position="none")+
                         ggtitle(paste0("Sex ratio (male/female) of mortality rates by 5-age groups with time. ",name)) +
-                        geom_text(data = to_label,aes(x=Age_mean,y=rat,label = floor(Date)), color="blue", size=3) +
                         personal_theme
         }
+        return(gg)
+}
+
+        
+plot_old_age <- function(name, country_data, post_old_age_adj, selected_data){       
+                old_age <- bind_rows(
+                        post_old_age_adj %>% select(Source,Age, Sex, Date, nMx, lx) %>% 
+                                pivot_longer(cols=nMx:lx,names_to="Indicator", values_to="DataValue") %>% 
+                                mutate(Adjusted = "Yes"),
+                        country_data %>% select(Source=DataSourceShortName, Age = AgeStart, Sex=SexName, 
+                                                Date=TimeMid, Indicator=IndicatorName,
+                                                DataValue) %>% 
+                                mutate(Indicator = case_when(Indicator=="l(x) - abridged"~"lx",
+                                                             Indicator=="m(x,n) - abridged"~"nMx", 
+                                                             TRUE~ "nada")) %>% 
+                                mutate(Adjusted = "No")) %>% 
+                        arrange(Source,Date,Sex,Adjusted,Age)  %>% 
+                        left_join(selected_data %>% 
+                                          select(Source=DataSourceShortName, Sex=SexName, 
+                                                 Date=TimeMid, Indicator=IndicatorName) %>% 
+                                          mutate(Indicator = case_when(Indicator=="l(x) - abridged"~"lx",
+                                                                       Indicator=="m(x,n) - abridged"~"nMx", 
+                                                                       TRUE~ "nada"),
+                                                 selected = 1), 
+                                  by=c("Source","Sex","Date","Indicator")) %>% 
+                        filter(Age>=60,!Indicator %in% c("lx","nada"),selected==1) %>% 
+                        mutate(Age_group = paste0(Age,"-",lead(Age)),
+                               Age_group = ifelse(Age==100, "100+", Age_group),
+                               Age_group = ifelse(Age>50 & lead(Age)!=(Age+5), paste0(Age,"+"),Age_group),
+                               Age_group = as.factor(Age_group))
+                
+                personal_theme <- theme(plot.title = element_text(hjust = 0.5),
+                                        text = element_text(size = 16),
+                                        plot.margin=grid::unit(c(0,0,0,0), "mm"),
+                                        plot.caption = element_text(color = 1, face = "italic", size=11))
+                
+                labels_age_groups <- as.character(unique(old_age$Age_group))
+                old_age$Age_group <- factor(old_age$Age_group,
+                                levels=c(labels_age_groups[labels_age_groups!="100+"],"100+"))
+                
+                gg <- ggplot(old_age %>% filter(!is.na(Age_group)),
+                       aes(x=Date, y=DataValue, color=factor(Age_group)))+
+                        geom_line(aes(linetype=factor(Adjusted)))+
+                        scale_y_log10()+
+                        scale_colour_viridis_d(option = "c")+
+                        geom_point(aes(shape=Source))+
+                        theme_bw()+
+                        labs(x="Year",y="", caption = Sys.time(), color="Age", linetype="Fitted") +
+                        scale_x_continuous(breaks = seq(1950,2020,10), 
+                                           labels = seq(1950,2020,10))+
+                        ggtitle(paste0("Old age mortality rates by 5-year groups fitted and not. ", name),
+                                subtitle = "This is previous to any smoothing. Only for used data") +
+                        facet_grid(rows = vars(Indicator), 
+                                   cols = vars(Sex),
+                                   scales = "free_y",space = "free",switch = "y")+
+                        personal_theme
         return(gg)
 }

@@ -48,7 +48,7 @@ if (packageVersion('openxlsx') > '4.2.3'){
 .packages = c("devtools", "data.table", "DemoTools", "DemoToolsData", "DDSQLtools","jsonlite","openssl",
               "tidyverse","patchwork","gridExtra","tictoc","plotly", "furrr","ggrepel","fertestr", "zoo",
               "colorspace", "scales","latex2exp","readxl","openxlsx","logr","ungroup","MortalitySmooth",
-              "StMoMo","MortCast")
+              "StMoMo","MortCast","slider")
 
 # Install CRAN packages (if not already installed)
 .inst <- .packages %in% installed.packages()
@@ -84,14 +84,20 @@ source(file.path(LT_dir,"funs.R"))
 source(file.path(LT_dir,"plot_funs.R"))
 
 myLocID_tier1 <- read.csv("data/locs_tier1.csv")$Name 
-myLocID_celade <- c(68,76,152,170,188,192,214,218,222,320,332,340,484,558,591,600,604,858,862)
-myLocID_iw <- c(52,312,28,533,44,531,308,388,662,780,850,84,226,24,678,254,328,740,132,624)
+myLocID_celade <- c(32,68,76,152,170,188,192,214,218,222,320,332,340,484,558,591,600,604,858,862)
+myLocID_iw <- c(32,52,312,28,533,44,531,308,388,662,780,850,84,226,24,678,254,328,740,132,624)
 myLocID_danan <- c(344,158,196,702,144,156,446,792,418,764,96,360,458,608,462,64,496,104,626)
 myLocID_thomas <- c(233,404,800,410,854,108,120,140,148,178,384,408,232,266,270,288,
                     324,430,454,466,562,566,646,686,694,706,768,204,180)
+myLocID_giulia <- c(480,670,690,258,474,540,242,296,583,598,882,90,776,548,316,630,262,450,638)
+myLocID_sarah <- c(4,48,50,356,364,368,400,414,422,524,512,586,634,682,275,760,784,887)
+myLocID_vladimira <- c(268,51,31,398,417,762,795,860,12,818,434,478,504,728,729,788,732,174,175)
+myLocID_cases <- c(340, 222, 218, 792, 356)
 
-for(myLocID in myLocID_thomas[-c(1:12)]){
-# myLocID = 408
+
+for(myLocID in 68){
+# SriLanka 
+# myLocID = 218
 print(myLocID)
         
 # read InputFiles. IMPORTANT: check InputFiles url in case is not local

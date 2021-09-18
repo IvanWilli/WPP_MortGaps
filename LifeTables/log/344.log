@@ -5,22 +5,10 @@ User Name: User
 R Version: 4.0.2 (2020-06-22)
 Machine: DESKTOP-KLE8ANG x86-64
 Operating System: Windows 10 x64 build 19043
-Log Start Time: 2021-08-24 12:28:32
+Log Start Time: 2021-09-08 21:51:30
 =========================================================================
 
-Error: inesperado SPECIAL in "for (myLocID %in%"
-
-
-NOTE: Log Print Time:  2021-08-24 12:28:34
-NOTE: Elapsed Time in seconds: 2.20480108261108
-
-Error: inesperado SPECIAL in "for (myLocID %in%"
-
-
-NOTE: Log Print Time:  2021-08-24 12:28:34
-NOTE: Elapsed Time in seconds: 0.00299191474914551
-
 =========================================================================
-Log End Time: 2021-08-24 12:28:34
-Log Elapsed Time: 0 00:00:02
+Log End Time: 2021-09-08 21:55:18
+Log Elapsed Time: 0 00:00:03
 =========================================================================
