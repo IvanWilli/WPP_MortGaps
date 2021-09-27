@@ -1,6 +1,207 @@
 # author: IW
 # set of functions used in `fill_gaps.R` and `fill_gaps_lt.R`.
 
+# read short notes
+download_db_reading_short_notes <- function(myLocID, myIndicators){
+        
+        serverURL = "https://popdiv.dfs.un.org/DemoData/api/"
+        shortnotes_URL <- "https://popdiv.dfs.un.org/peps/eagle/api/notes/get/longcatalogs/" 
+        options(unpd_server = serverURL)
+
+        ## query Shortnotes
+        shortnotes <- fromJSON(paste0(shortnotes_URL, WPP_RevID, "/", myLocID, "/OverallMortality"), flatten=TRUE)
+        
+        shortnotes1 <- data.table(shortnotes$DataCatalogsWithSelections)
+        shortnotes2 <- data.table(shortnotes$IndicatorMetadata)
+        shortnotes <- merge(shortnotes1[,.(DataCatalogID, IndicatorInternalName, SelectionValue)], shortnotes2[, .(IndicatorInternalName, DataProcessTypeIDs, DataStatusIDs, DataTypeIDs, IndicatorIDs)], by="IndicatorInternalName", all.x=TRUE, all.y=FALSE)
+        shortnotes_used <- shortnotes[SelectionValue %in% c("Used", "Considered", "NotConsidered")]
+        shortnotes_used[, LocID := myLocID]
+        
+        shortnotes_adult <- fromJSON(paste0(shortnotes_URL, WPP_RevID, "/", myLocID, "/AdultMortality"), flatten=TRUE)
+        shortnotes_adult1 <- data.table(shortnotes_adult$DataCatalogsWithSelections)
+        shortnotes_adult2 <- data.table(shortnotes_adult$IndicatorMetadata)
+        shortnotes_adult <- merge(shortnotes_adult1[,.(DataCatalogID, IndicatorInternalName, SelectionValue)], shortnotes_adult2[, .(IndicatorInternalName, DataProcessTypeIDs, DataStatusIDs, DataTypeIDs, IndicatorIDs)], by="IndicatorInternalName", all.x=TRUE, all.y=FALSE)
+        shortnotes_adult_used <- shortnotes_adult[SelectionValue %in% c("Used", "Considered", "NotConsidered")]
+        shortnotes_adult_used[, LocID := myLocID]
+        shortnotes_used <- unique(rbind(shortnotes_used, shortnotes_adult_used))
+        shortnotes_used <- shortnotes_used[SelectionValue %in% c("Used")]
+        
+        ## "melt" as long format and split DataTypeIDs into rows for easier merging with myDT
+        if (nrow(shortnotes_used)>0) {
+                shortnotes_used <- shortnotes_used[, .(DataTypeIDs=paste(DataTypeIDs, collapse=",")), by=c("LocID", "DataCatalogID", "SelectionValue")][, c(DataTypeIDs=strsplit(DataTypeIDs, ",")), by=c("LocID", "DataCatalogID", "SelectionValue")]
+                shortnotes_used[, DataTypeIDs := as.numeric(DataTypeIDs)]
+        }
+        shortnotes_used <- unique(shortnotes_used)
+        setnames(shortnotes_used, "DataTypeIDs", "DataTypeID")
+
+        DataCatalog <- data.table(get_datacatalog(locIds = myLocID, isSubnational = FALSE))
+        DataType <- data.table(get_datatypes())
+        shortnotes_used <- merge(shortnotes_used, DataCatalog[, .(LocID, DataCatalogID, DataProcessTypeID, DataProcessTypeShortName, DataProcessID, DataProcessShortName, ShortName)], by=c("LocID", "DataCatalogID"), all.x=TRUE, all.y=FALSE)
+        shortnotes_used <- merge(shortnotes_used, DataType[, .(DataTypeID=PK_DataTypeID, DataTypeGroupID, DataTypeShortName=ShortName, DataTypeSortOrder=SortOrder, DataTypeGroupID2, DataTypeGroupName2)], by="DataTypeID", all.x=TRUE, all.y=FALSE)
+        
+        DT <- data.table(get_recorddataadditional(
+                dataProcessIds = unique(shortnotes_used$DataProcessID),
+                dataTypeIds =  unique(shortnotes_used$DataTypeID),
+                startYear = 1940,
+                endYear = 2021,
+                indicatorIds = myIndicators, 
+                locIds = myLocID,
+                locAreaTypeIds = 2,
+                subGroupIds = 2,
+                isComplete = 0
+        ))
+        DT <- merge(DT, shortnotes_used[,.(LocID, DataCatalogID, DataTypeID, SelectionValue)], 
+                    by=c("LocID", "DataCatalogID", "DataTypeID"))
+        return(DT)
+}
+
+# old age adj plan B: ratio method
+old_age_adj <- function(final_data, dates_adj, min_age_adj){
+        dates_adj <- floor(dates_adj) + .5
+        dates_ref <- pmin(max(dates_adj) + 1:5, 2020.5)
+        ages_adj  <- min_age_adj:100
+        ages_ref  <- (min(ages_adj)-10):(min(ages_adj)-1)
+        # females
+        Mf <- final_data %>%
+                filter(Sex=="f") %>% 
+                select(Date,nMx,Age) %>%
+                arrange(Date,Age) %>% 
+                pivot_wider(names_from = Date, values_from = nMx)   %>% 
+                select(-Age) %>% as.matrix()
+        rates_obs_ref <- colMeans(Mf[ages_ref+1, as.character(dates_adj)])
+        rr <- rowMeans(Mf[ages_adj+1, as.character(dates_ref)] / 
+                               matrix(colMeans(Mf[ages_ref+1, as.character(dates_ref)]),
+                                      nrow = length(ages_adj), ncol = 5, byrow = T)
+        )
+        Mf[ages_adj+1, as.character(dates_adj)] <- sapply(rr, function(x) x * rates_obs_ref) %>% t()
+        old_adj_f <- Mf %>% 
+                as.data.frame() %>% 
+                mutate(Age = 0:100) %>% 
+                pivot_longer(cols=-Age, names_to="Date",values_to="nMx") %>% 
+                mutate(Sex = "f")
+        # for males
+        Mm <- final_data %>%
+                filter(Sex=="m") %>% 
+                select(Date,nMx,Age) %>%
+                arrange(Date,Age) %>% 
+                pivot_wider(names_from = Date, values_from = nMx)   %>% 
+                select(-Age) %>% as.matrix()
+        rates_obs_ref <- colMeans(Mm[ages_ref+1, as.character(dates_adj)])
+        rr <- rowMeans(Mm[ages_adj+1, as.character(dates_ref)] / 
+                               matrix(colMeans(Mm[ages_ref+1, as.character(dates_ref)]),
+                                      length(ages_adj), ncol = 5, byrow = T)
+        )
+        Mm[ages_adj+1, as.character(dates_adj)] <- sapply(rr, function(x) x * rates_obs_ref) %>% t()
+        old_adj_m <- Mm %>% 
+                as.data.frame() %>% 
+                mutate(Age = 0:100) %>% 
+                pivot_longer(cols=-Age, names_to="Date",values_to="nMx") %>% 
+                mutate(Sex = "m")
+        # return
+        out <- bind_rows(old_adj_f,old_adj_m) %>% 
+                mutate(Date = as.numeric(Date)) %>% 
+                left_join(final_data %>% select(-nMx), by = c("Date","Age","Sex")) %>% 
+                split(list(.$Date, .$Sex), drop = T) %>% 
+                lapply(function(X){
+                        LT <- lt_single_mx(X$nMx, X$Age, Sex = unique(X$Sex), OAG = T, extrapFrom = OAnew)
+                        LT$Date <- as.numeric(unique(X$Date))
+                        LT$Source <- unique(X$Source)
+                        LT$DataProcess <- unique(X$DataProcess)
+                        LT$Sex  <- unique(X$Sex)
+                        return(LT)}) %>% 
+                bind_rows()
+        return(out)
+}
+
+# constrained extension
+lt_extrap_constrained <- function(nMx, Age, 
+                                  Sex = "m",
+                                  extrapFrom = NULL, # take last age 
+                                  method_ex = "classical", 
+                                  extrapLaw = "Gompertz",
+                                  OAnew = 100,
+                                  Single = F, # for output only
+                                  k = 1, # how many previous ages for extrap
+                                  alpha = 1.4, # for non classical e(OAG) computation 
+                                  beta = .095, # for non classical e(OAG) computation
+                                  r = .01, # for non classical e(OAG) computation
+                                  x_hat = 90 # for non classical e(OAG) computation
+){
+        
+        # control check
+        stopifnot(is_abridged(Age))
+        if(is.null(extrapFrom)) extrapFrom <- max(Age)
+        
+        # open age rate
+        Ma <- last(nMx)
+        
+        # life expectancy computation
+        if(method_ex == "classical"){
+                ex_obj <- 1/Ma
+        }
+        if(method_ex == "H-C"){
+                ex_obj <- 1/Ma*exp(-beta*r*Ma^(-alpha))
+        }
+        if(method_ex == "Mitra"){
+                ex_obj <- 1/Ma*exp(-r*(1/Ma-(1+r*1/Ma)*(x_hat-extrapFrom)))
+        }
+        
+        # choose b for fitting ex_ob
+        Age_extrap <- c(0,1,seq(5,OAnew,5))
+        nMx_extrap <- c(nMx,rep(NA,length(Age_extrap)-length(Age)))
+        b_optim <- optimise(fo_extrap, interval=c(.001,1), 
+                            Age=Age_extrap, nMx = nMx_extrap, Sex = Sex,
+                            extrapFrom = extrapFrom, ex_obj = ex_obj, 
+                            extrapLaw = extrapLaw,
+                            k = k)$minimum
+        
+        # set extrap rates
+        nMx_prev <- nMx_extrap[Age_extrap<extrapFrom]
+        nMx_extrap <- law_extrap(nMx = nMx_extrap, Age = Age_extrap,
+                                 extrapFrom = extrapFrom, 
+                                 b = b_optim, extrapLaw = extrapLaw,
+                                 k = k)
+        nMx_hat <- c(nMx_prev, nMx_extrap)
+        
+        # set the final lt
+        lt_out <- lt_ambiguous(nMx_or_nqx_or_lx = nMx_hat, type = "m", Sex = Sex,
+                               Age = Age_extrap, OAnew=100, Single = Single)
+        
+        return(lt_out)
+} 
+
+# function to minimize
+fo_extrap <- function(b, Age, Sex = Sex, extrapFrom, ex_obj, nMx, extrapLaw, k){
+        nMx_extrap <- law_extrap(nMx = nMx, Age = Age, extrapFrom = extrapFrom, b = b, extrapLaw = extrapLaw, k=k)
+        nMx_prev <- nMx[Age<extrapFrom]
+        nMx_hat <- c(nMx_prev, nMx_extrap)
+        ex_hat <- lt_ambiguous(nMx_hat, "m", Age, Sex = Sex, OAnew=100, Single=F) %>% filter(Age==extrapFrom) %>% pull(ex)
+        # quadratic relative diff
+        quad_dif <- (ex_hat/ex_obj-1)^2
+        return(quad_dif)
+}
+
+# given parameter "b", apply extrapolation law from some age "extrapFrom". 
+# using the mean of the log of "k" 5age-rate-observations before OAG
+law_extrap <- function(nMx, Age, extrapFrom, b, extrapLaw = "Gompertz", k=3){
+        # where is the starting age for extrapolate
+        id <- which(Age==extrapFrom)
+        # index of observations to average
+        id_mean <- seq(id - 1,length.out = k, by=-1)
+        # apply some law
+        if(extrapLaw == "Gompertz"){
+                C_mean <- exp(mean(log(nMx[id_mean])))
+                nMx_hat <- C_mean * exp(b*(Age-extrapFrom+5))
+        }
+        if(extrapLaw == "Kannisto"){
+                C_mean <- exp(mean(log(nMx[id_mean])))/(1-exp(mean(log(nMx[id_mean]))))
+                nMx_hat <- C_mean * exp(b*(Age-extrapFrom+5))/(1 + C_mean * exp(b*(Age-extrapFrom+5)))
+        }
+        # return only ages that matters
+        return(nMx_hat[Age>=extrapFrom])
+}
+
+
 # fill interval gaps
 fill_intervals_gaps <- function(intervals_gaps, main_data_time, 
                                 lt_data, first_year, last_year,
@@ -36,9 +237,15 @@ fill_intervals_gaps <- function(intervals_gaps, main_data_time,
                                                 select(ex) %>% pull()
                                         e0_Females <- lt_data %>% filter(Date<=min(LClim_data$Date[LClim_data$Type=="main"]), Age==0, Sex == "f") %>% 
                                                 select(ex) %>% pull()
-                                        gap_before_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
+                                        gap_before_data <- try(interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
                                                                          dates_e0 = dates_e0, e0_Males = e0_Males, e0_Females = e0_Females,
-                                                                         Single = Single, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat
+                                                                         Single = Single, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat)
+                                        if("try-error" %in% class(gap_before_data)){
+                                                gap_before_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
+                                                                                     dates_e0 = dates_e0, e0_Males = e0_Males, e0_Females = e0_Females,
+                                                                                     Single = Single, prev_divergence = Empirical_LT_LeeCarter_non_divergent,
+                                                                                     extrapLaw = "Makeham")$lt_hat
+                                        }
                                 }
                                 gap_before_data <- gap_before_data %>% mutate(Type = "LC-Lim", Source = "LC-Lim")
                         }else{
@@ -86,10 +293,16 @@ fill_intervals_gaps <- function(intervals_gaps, main_data_time,
                                                 select(ex) %>% pull()
                                         e0_Females <- LClim_data %>% filter(Type!="main" | Date %in% c(min(gap)-1,max(gap)+1), Age==0, Sex=="f") %>% 
                                                 select(ex) %>% pull()
-                                        gap_after_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
+                                        gap_after_data <- try(interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
                                                                         dates_e0 = dates_e0, e0_Males = e0_Males, e0_Females = e0_Females,
                                                                         Single = Single, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat %>% 
-                                                mutate(Type = "LC-Lim", Source = "LC-Lim")
+                                                                        mutate(Type = "LC-Lim", Source = "LC-Lim"))
+                                        if("try-error" %in% class(gap_after_data)){
+                                                gap_after_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
+                                                                                    dates_e0 = dates_e0, e0_Males = e0_Males, e0_Females = e0_Females,
+                                                                                    Single = Single, prev_divergence = Empirical_LT_LeeCarter_non_divergent,
+                                                                                     extrapLaw = "Makeham")$lt_hat
+                                        }
                                 }
                         }
                         if(length(unique(LC_data$Date)) %in% 3:5){
@@ -105,10 +318,17 @@ fill_intervals_gaps <- function(intervals_gaps, main_data_time,
                                                 select(ex) %>% pull()
                                         e0_Females <- lt_data %>% filter(Date<=min(LClim_data$Date[LClim_data$Type=="main"]), Age==0, Sex == "f") %>% 
                                                 select(ex) %>% pull()
-                                        gap_after_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
+                                        gap_after_data <- try(interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
                                                                         dates_e0 = dates_e0, e0_Males = e0_Males, e0_Females = e0_Females,
                                                                         Single = Single, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat %>% 
-                                                mutate(Type = "LC-Lim", Source = "LC-Lim")
+                                                mutate(Type = "LC-Lim", Source = "LC-Lim"))
+                                        if("try-error" %in% class(gap_after_data)){
+                                                gap_after_data <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
+                                                                        dates_e0 = dates_e0, e0_Males = e0_Males, e0_Females = e0_Females,
+                                                                        Single = Single, prev_divergence = Empirical_LT_LeeCarter_non_divergent,
+                                                                        extrapLaw = "Makeham")$lt_hat %>% 
+                                                                      mutate(Type = "LC-Lim", Source = "LC-Lim")
+                                        }
                                 }
                         }
                         if(length(unique(LC_data$Date))>5){
@@ -155,9 +375,15 @@ fill_intervals_gaps <- function(intervals_gaps, main_data_time,
                                         select(ex) %>% pull()
                                 e0_Females <- LClim_data %>% filter(Type!="main" | Date %in% c(min(gap)-1,max(gap)+1), Age==0, Sex=="f") %>% 
                                         select(ex) %>% pull()
-                                gap_middle_data_i <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
+                                gap_middle_data_i <- try(interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
                                                                    dates_e0 = dates_e0, e0_Males = e0_Males, e0_Females = e0_Females,
-                                                                   Single = Single, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat
+                                                                   Single = Single, prev_divergence = Empirical_LT_LeeCarter_non_divergent)$lt_hat)
+                                if("try-error" %in% class(gap_middle_data_i)){
+                                gap_middle_data_i <- interp_lc_lim(input = LClim_data, dates_out = as.numeric(gap), 
+                                                                       dates_e0 = dates_e0, e0_Males = e0_Males, e0_Females = e0_Females,
+                                                                       Single = Single, prev_divergence = Empirical_LT_LeeCarter_non_divergent,
+                                                                       extrapLaw = "Makeham")$lt_hat
+                                }
                         } 
                         gap_middle_data <- bind_rows(gap_middle_data,gap_middle_data_i)
                 }
@@ -175,7 +401,7 @@ fill_intervals_gaps <- function(intervals_gaps, main_data_time,
                           by = "Date") %>%
                 mutate(Source = ifelse(!is.na(Source2),Source2,Source)) %>% 
                 select(-Source2, -Type) %>% 
-                filter(Source!="WPP19")
+                filter(!Source %in% c("WPP19"))
         # plot_ex_time(final_data,country = "pepe")
         
         return(final_data)
@@ -1126,3 +1352,14 @@ Mode <- function(x) {
         ux <- unique(x)
         ux[which.max(tabulate(match(x, ux)))]
 }
+
+# possible mortality laws: vector in mort_inputs
+mort_laws_options <- c("kannisto",
+               "kannisto_makeham",
+               "cokannisto",
+               "makeham",
+               "gompertz",
+               "ggompertz",
+               "beard",
+               "beard_makeham",
+               "quadratic")

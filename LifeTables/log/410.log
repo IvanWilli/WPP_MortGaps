@@ -5,13 +5,15 @@ User Name: User
 R Version: 4.0.2 (2020-06-22)
 Machine: DESKTOP-KLE8ANG x86-64
 Operating System: Windows 10 x64 build 19043
-Log Start Time: 2021-08-24 10:02:40
+Log Start Time: 2021-09-21 10:37:59
 =========================================================================
 
-Error in fill_gaps(country = country_full, dirs = data.frame(LT_dir = LT_dir,  : 
-  Not developed yet
+Modelled LT. Not here.
 
+NOTE: Log Print Time:  2021-09-21 10:38:00
+NOTE: Elapsed Time in seconds: 0.542826890945435
 
-NOTE: Log Print Time:  2021-08-24 10:02:44
-NOTE: Elapsed Time in seconds: 3.72779607772827
-
+=========================================================================
+Log End Time: 2021-09-21 10:38:00
+Log Elapsed Time: 0 00:00:00
+=========================================================================

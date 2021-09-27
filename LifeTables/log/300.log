@@ -5,10 +5,25 @@ User Name: User
 R Version: 4.0.2 (2020-06-22)
 Machine: DESKTOP-KLE8ANG x86-64
 Operating System: Windows 10 x64 build 19043
-Log Start Time: 2021-09-09 10:40:30
+Log Start Time: 2021-09-20 09:30:14
 =========================================================================
 
-=========================================================================
-Log End Time: 2021-09-09 10:44:20
-Log Elapsed Time: 0 00:00:03
-=========================================================================
+Error in base::try(M, TRUE) : objeto 'M' no encontrado
+
+
+NOTE: Log Print Time:  2021-09-20 09:35:57
+NOTE: Elapsed Time in seconds: 5.70713176727295
+
+Error in base::try(M, TRUE) : objeto 'M' no encontrado
+
+
+NOTE: Log Print Time:  2021-09-20 09:35:57
+NOTE: Elapsed Time in seconds: 0.0149581432342529
+
+Error in filter(., TimeMid == 1960.5, SexName == "m") : 
+  objeto 'lt_data_raw' no encontrado
+
+
+NOTE: Log Print Time:  2021-09-20 09:36:13
+NOTE: Elapsed Time in seconds: 16.3441548347473
+

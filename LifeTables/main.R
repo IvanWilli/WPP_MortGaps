@@ -77,11 +77,16 @@ LT_dir         <- file.path(root_dir, "LifeTables")
 plots_dir      <- file.path(root_dir, "WPP2021_plots")
 aux_dir     <- file.path(LT_dir, "AuxFiles")
 
-# funs
+# funs for empirical lt
 source(file.path(LT_dir,"fill_gaps_lt.R"))
 source(file.path(LT_dir,"fill_gaps.R"))
 source(file.path(LT_dir,"funs.R"))
 source(file.path(LT_dir,"plot_funs.R"))
+# funs for model lt (form Sarah code)
+source(file.path(LT_dir,"MLT/lt_model_cdun_match_single.R"))
+source(file.path(LT_dir,"MLT/lt_model_cdun_combin_single.R"))
+source(file.path(LT_dir,"MLT/lt_model_un_bestft.R"))
+source(file.path(LT_dir,"MLT/WPP_MLT_mortality_patterns.R"))
 
 myLocID_tier1 <- read.csv("data/locs_tier1.csv")$Name 
 myLocID_celade <- c(32,68,76,152,170,188,192,214,218,222,320,332,340,484,558,591,600,604,858,862)
@@ -92,12 +97,14 @@ myLocID_thomas <- c(233,404,800,410,854,108,120,140,148,178,384,408,232,266,270,
 myLocID_giulia <- c(480,670,690,258,474,540,242,296,583,598,882,90,776,548,316,630,262,450,638)
 myLocID_sarah <- c(4,48,50,356,364,368,400,414,422,524,512,586,634,682,275,760,784,887)
 myLocID_vladimira <- c(268,51,31,398,417,762,795,860,12,818,434,478,504,728,729,788,732,174,175)
+myLocID_patrick <- c(834,652,663,16,20,660,60,535,72,92,136,184,212,748,238,234,
+                        292,304,336,833,426,438,584,492,500,508,516,520,570,580,585,654,
+                        659,666,674,534,710,772,796,798,876,894,716,704,116)
 myLocID_cases <- c(340, 222, 218, 792, 356)
 
 
-for(myLocID in 68){
-# SriLanka 
-# myLocID = 218
+for(myLocID in 70){
+# myLocID = 858
 print(myLocID)
         
 # read InputFiles. IMPORTANT: check InputFiles url in case is not local
@@ -134,4 +141,6 @@ log_close()
 # OAnew = 100
 # first_year = 1950
 # last_year = WPP_revision-1
+
+
 # End ---------------------------------------------------------------------

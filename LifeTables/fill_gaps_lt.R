@@ -8,6 +8,7 @@ fill_gaps_lt <- function(country_db = NULL,
                             mort_params = NULL,
                             mort_inputs = NULL,
                             mort_crises = NULL,
+                            mlts = NULL,
                             first_year = 1950,
                             last_year = 2020){
 
@@ -36,18 +37,17 @@ fill_gaps_lt <- function(country_db = NULL,
                 exclude_ds <- NULL
         }
         # input data
-        possible_input <- c("abridged","abr","complete","single")
-        ok_input <- c("abridged","abridged","complete","complete")
+        possible_input <- c("abridged","abr",     "complete","single")
+        ok_input       <- c("abridged","abridged","complete","complete")
         Age_Specific_Mortality_Input_Data <- ok_input[possible_input %in% Age_Specific_Mortality_Input_Data]
-        # mortality laws?
         
         # receive data ------------------------------------------------------------
         
         # deduplicate (PG fun)  
         country_db_dedup <- try(country_db %>% as.data.table() %>% deduplicates())
-        if("try-error" %in% class(country_db_dedup)){
-                log_print("No VR or Estimated data are in included in downloaded data.")
-                stop("No VR or Estimated data are in included in downloaded data.")
+        if("try-error" %in% class(country_db_dedup) | all(unique(country_db_dedup$TimeMid)<1950)){
+                log_print("No VR or Estimated data are in included in downloaded data for the estimation period.")
+                stop("No VR or Estimated data are in included in downloaded data for the estimation period.")
         }
         
         # get relevant vars and rename WPP got from VR
@@ -71,11 +71,11 @@ fill_gaps_lt <- function(country_db = NULL,
                 as.data.frame() %>% 
                 distinct()
         
-        # !!! TEMPORARY filters until data server is OK
-        if(country_full$PK_LocID==152){
-                country_raw_data <- country_raw_data %>% filter(TimeMid<2020, 
-                                                                DataSourceShortName!="DYB")
-        }
+        # # !!! TEMPORARY filters until data server is OK
+        # if(country_full$PK_LocID==152){
+        #         country_raw_data <- country_raw_data %>% filter(TimeMid<2020, 
+        #                                                         DataSourceShortName!="DYB")
+        # }
         
         # what year-sex-type of data wnats in ----------------------------------------
         country_raw_data <- bind_rows(
@@ -90,7 +90,10 @@ fill_gaps_lt <- function(country_db = NULL,
                 country_raw_data %>%
                         filter(!DataProcess %in% c("VR","Estimate") | TimeMid_floor< first_year) # want the rest available
         )
-
+        if(nrow(country_raw_data)==0){
+                stop("You filtered out all the (tiny) available data")
+        }
+        
         # add WPP19 as a base point in 1950-1955 in case it is neccesary
         country_raw_data_wpp19 <- add_wpp19_1950data(country = country_full$PK_LocID, country_data = country_raw_data)
         
@@ -98,7 +101,7 @@ fill_gaps_lt <- function(country_db = NULL,
         pop <- DemoToolsData::WPP2019_pop %>%
                 rename(m=PopMale, f=PopFemale) %>% 
                 filter(LocID==country_full$PK_LocID, Year <= last_year)
-        
+
         # validation and zeroes ----------------------------------------------------------
 
         # validation: can be labelled ad single or abridged? 
@@ -173,16 +176,15 @@ fill_gaps_lt <- function(country_db = NULL,
                 distinct()
                 
         # harmonize all lt data with same close-out ------------------------------------------
-        # In this step:
-                # if is input is Abridged then standarize with same OAG. If not, graduate all to single ages
+        # if is input is Abridged then standarize with same OAG. If not, graduate all to single ages
         Single_first <- ifelse(Age_Specific_Mortality_Input_Data == "abridged", FALSE, TRUE)
         
         # standarize/graduate
         lt_data <-  lt_data_raw %>% 
                 split(list(.$TimeMid, .$SexName), drop = T) %>% 
                 lapply(function(X){
-                        print(paste0(unique(X$SexName),"-", unique(X$TimeMid)))
-                        # X <- lt_data_raw %>% filter(TimeMid==1968.5,SexName=="m")
+                        # print(paste0(unique(X$SexName),"-", unique(X$TimeMid)))
+                        # X <- lt_data_raw %>% filter(TimeMid==2000.5,SexName=="f")
                         X_TimeMid <- unique(X$TimeMid)
                         X_TimeMid_floor <- unique(X$TimeMid_floor)
                         X_sex <- unique(X$SexName)
@@ -192,13 +194,13 @@ fill_gaps_lt <- function(country_db = NULL,
                                                 ifelse(str_detect(unique(X$IndicatorName),"l\\(x"),"lx",NA))
                         # detect if it is a real OAG
                         X_OAG <- max(X_ages)
-                        if(Indicator_type=="mx"){
+                        if(Indicator_type=="mx" & !unique(X$complete)){
                                 N <- length(X_ages)
                                 is_an_OAG <- ifelse(X$DataValue[N] > X$DataValue[N-1], TRUE, FALSE)
                         }else{
                                 is_an_OAG = TRUE # is the default also in DemoTools, I don´t know how to infer this only with l(x)
                         }
-                                
+                        print(paste0(unique(X$SexName),"-", unique(X$TimeMid),"- OAG ",is_an_OAG))     
                         # see inputs for adjustments
                         X_inputs <- mort_inputs %>% filter(TimeMid_floor == X_TimeMid_floor, Sex == X_sex)
                         
@@ -236,20 +238,21 @@ fill_gaps_lt <- function(country_db = NULL,
                         }
                         
                         # VR coverage adjustment for ages>=5, if was defined in InputFiles
-                        # first get always rates
-                        LT <- lt_ambiguous(nMx_or_nqx_or_lx = X$DataValue,
+                        # first get always rates - don´t extend
+                        LT_cov <- lt_ambiguous(nMx_or_nqx_or_lx = X$DataValue,
                                             type = Indicator_type,
                                             Age = X_ages,
                                             Sex = X_sex,
+                                            a0rule = "cd", region = "w",
                                             Single = Single_first,
                                             OAnew = X_OAG)
                         # recover OAG rate just to be sure DemoTools did not impute it
                         if(Indicator_type=="mx"){
-                                LT$nMx[LT$Age==X_OAG] <- X$DataValue[LT$Age==X_OAG]
+                                LT_cov$nMx[LT_cov$Age==X_OAG] <- X$DataValue[LT_cov$Age==X_OAG]
                         }
                         adjust_VR_completeness <- ifelse(is.na(X_DataProcess) | X_DataProcess != "VR" | nrow(X_inputs)==0, 1, 
                                                           as.numeric(X_inputs$VR_completeness))
-                        LT$nMx[LT$Age>=5] <- LT$nMx[LT$Age>=5]/ adjust_VR_completeness
+                        LT_cov$nMx[LT_cov$Age>=5] <- LT_cov$nMx[LT_cov$Age>=5]/ adjust_VR_completeness
                         
                         # Old-age adjustments if was defined in InputFiles
                         adjust_LT_oldage <- ifelse(nrow(X_inputs)==0, F, X_inputs$adjust_LT_oldage)
@@ -258,11 +261,18 @@ fill_gaps_lt <- function(country_db = NULL,
                         # kind of age interval
                         N_fit <- ifelse(unique(X$complete),1,5)
                         if(adjust_LT_oldage){
-                                X_extrapLaw <- X_inputs$extrapLaw
+                                if(tolower(X_inputs$extrapLaw) %in% mort_laws_options){
+                                        X_extrapLaw <- X_inputs$extrapLaw
+                                }else{
+                                        X_extrapLaw <- "kannisto"
+                                        log_print(paste0("Sorry, did not find the mortality law of year", 
+                                                         X_TimeMid_floor," of possible options in the MortalityLaws package. Used Kannisto instead."))
+                                }
                                 X_extrapFrom <- min(X_inputs$extrapFrom, X_OAG)
                                 X_range_age_fit <- as.numeric(stringr::str_extract_all(X_inputs$extrapFit, "\\d+")[[1]])
                                 X_extrapFit <- seq(min(min_age_fit, X_range_age_fit[1]),
-                                                   min(X_OAG, ifelse(is.na(X_range_age_fit[2]),1e3,X_range_age_fit[2])),
+                                                   min(X_OAG, ifelse(is.na(X_range_age_fit[2]),1e3,X_range_age_fit[2]))-
+                                                           N_fit, #ifelse(is_an_OAG,N_fit,0),
                                                        N_fit)
                                 if(Age_Specific_Mortality_Input_Data == "abridged"){
                                         X_ages_out <- c(0,1,seq(5,OAnew,5))
@@ -275,12 +285,13 @@ fill_gaps_lt <- function(country_db = NULL,
                                         Y <- lt_data_raw %>% filter(TimeMid == X_TimeMid,
                                                                     DataProcess == X_DataProcess,
                                                                     SexName != X_sex)
-                                        X_LT <- LT
+                                        X_LT <- LT_cov
                                         # give to the other sex the same oag
                                         Y_LT <- lt_ambiguous(nMx_or_nqx_or_lx = Y$DataValue,
                                                              type = Indicator_type,
                                                              Age = Y$AgeStart,
                                                              Sex = unique(Y$SexName),
+                                                             a0rule = "cd", region = "w",
                                                              Single = Single_first,
                                                              OAnew = X_OAG)
                                         if(X_sex == "m"){
@@ -298,13 +309,18 @@ fill_gaps_lt <- function(country_db = NULL,
                                         }else{
                                                 X_LT <- as.numeric(XY_LT$female)
                                         }
+                                        # plot(X_ages_out,XY_LT$male, log="y", xlim=c(0,100), col=2, t="l")
+                                        # points(X_ages, mxM$nMx, log="y", xlim=c(0,100),col=2)
+                                        # points(X_ages, mxF$nMx)
+                                        # lines(X_ages_out,XY_LT$female)
                                         LT <- lt_single_mx(X_LT, Age = X_ages_out)
                                 }else{
                                         # if not coKannisto
-                                        LT <- lt_ambiguous(nMx_or_nqx_or_lx = LT$nMx,
+                                        LT <- lt_ambiguous(nMx_or_nqx_or_lx = LT_cov$nMx,
                                                            type = "mx",
-                                                           Age = LT$Age,
+                                                           Age = LT_cov$Age,
                                                            Sex = X_sex,
+                                                           a0rule = "cd", region = "w",
                                                            extrapLaw = X_extrapLaw,
                                                            extrapFrom = X_extrapFrom,
                                                            extrapFit = X_extrapFit,
@@ -316,17 +332,38 @@ fill_gaps_lt <- function(country_db = NULL,
                                 # if not adjustment on old ages
                                 X_extrapLaw <- NULL
                                 X_extrapFrom <- min(extrapFrom_single,max(X$AgeStart))
-                                X_extrapFit <- seq(min(min_age_fit,60),max(X$AgeStart),N_fit)
-                                LT <- lt_ambiguous(nMx_or_nqx_or_lx = LT$nMx,
+                                # es muy peligroso tomar el último grupo, ha dado resultado locos: URU 2002 females
+                                X_extrapFit <- seq(min(min_age_fit,60),max(X$AgeStart)-
+                                                           N_fit, #ifelse(is_an_OAG,N_fit,0),
+                                                   N_fit)
+                                LT <- lt_ambiguous(nMx_or_nqx_or_lx = LT_cov$nMx,
                                                    type = "mx",
-                                                   Age = LT$Age,
+                                                   Age = LT_cov$Age,
                                                    Sex = X_sex,
+                                                   a0rule = "cd", region = "w",
                                                    extrapLaw = X_extrapLaw,
                                                    extrapFrom = X_extrapFrom,
                                                    extrapFit = X_extrapFit,
                                                    OAnew = OAnew,
                                                    Single = Single_first,
-                                                   OAG=is_an_OAG)
+                                                   OAG= is_an_OAG)
+                                # conservative extension: constrained in case 1/M(OAG) is less than DemoTools extension  
+                                if(!unique(X$complete) & !Single_first & is_an_OAG & X_OAG<90){
+                                        eOAG_DemoTools_ext = LT$ex[LT$Age==X_OAG]
+                                        eOAG_classical <- LT_cov$ex[LT_cov$Age==X_OAG]
+                                        if(eOAG_classical < (eOAG_DemoTools_ext-.5)){
+                                                browser()
+                                                # constrained extension
+                                                LT <- lt_extrap_constrained(LT_cov$nMx, 
+                                                                            Age = LT_cov$Age, 
+                                                                            Sex = X_sex, 
+                                                                            OAnew = OAnew, 
+                                                                            extrapLaw = "Kannisto", 
+                                                                            Single = F)
+                                                eOAG_constrained_ext = LT$ex[LT$Age==X_OAG]
+                                        print(round(c(eOAG_classical, eOAG_DemoTools_ext, eOAG_constrained_ext),1)) 
+                                        }
+                                }
                         }
 
                         # final vars
@@ -401,7 +438,7 @@ fill_gaps_lt <- function(country_db = NULL,
                         lapply(function(X){
                                 print(paste0(unique(X$Sex),"-", unique(X$Date)))
                                 # X <- lt_data_smooth %>% filter(Date==1980.5,Sex=="f")
-                                LT <- lt_abridged(nMx = X$nMx_smooth, Age = X$Age, Sex = unique(X$Sex)) 
+                                LT <- lt_abridged(nMx = X$nMx_smooth, Age = X$Age, a0rule = "cd", region = "w", Sex = unique(X$Sex)) 
                                 LT$Date <- X$Date
                                 LT$Type <- unique(X$Type)
                                 LT$Source <- unique(X$Source)
@@ -435,6 +472,48 @@ fill_gaps_lt <- function(country_db = NULL,
                                 tibble(Sex = "m", Date = selection_gaps_sex[["m"]]$main_data_time, Type = "main")),
                                 by = c("Date", "Sex")) %>% 
                         mutate(Type = ifelse(is.na(Type), "add", Type))
+        }
+        
+        # include MLT in case it is asked
+        if(!is.null(mlts)){
+                if(Age_Specific_Mortality_Input_Data == "abridged"){
+                        #abreviate
+                        MLT_data <- mlts %>% 
+                                split(list(.$Date, .$Sex), drop = T) %>% 
+                                lapply(function(X){
+                                        LT130 <- lt_single2abridged(nMx = X$nMx,
+                                                                 lx = X$lx,
+                                                                 nLx = X$nLx,
+                                                                 ex = X$ex, 
+                                                                 Age = X$Age, 
+                                                                 Sex = unique(X$Sex))
+                                        LT <- lt_abridged(nMx = LT130$nMx,
+                                                          Age = LT130$Age, 
+                                                          Sex = unique(LT130$Sex),
+                                                          OAnew = OAnew)
+                                        LT$Sex <- unique(X$Sex)
+                                        LT$Date <- as.numeric(unique(X$Date))
+                                        LT$Source <- "MLT"
+                                        LT$Type <- "add"
+                                        LT$Sex  <- unique(X$Sex)
+                                        LT$DataProcess <- NA
+                                        LT
+                                }) %>% bind_rows()
+                }else{
+                        MLT_data <- mlts %>%  mutate(Source = "MLT", Dataprocess = NA, Type = "add")
+                }
+        # MLT inlcusion replaces everything in that same date
+        lt_data <- lt_data %>% 
+                filter(!Date %in% unique(MLT_data$Date)) %>% 
+                bind_rows(MLT_data)
+        MLT_data_selection <- MLT_data %>% 
+                transmute(IndicatorName = "m(x,n) - abridged",
+                          TimeMid = Date,
+                          DataSourceShortName = "MLT",
+                          Type = "add",
+                          SexName = Sex)
+        selected_data <- bind_rows(selected_data,MLT_data_selection %>% distinct()) %>% arrange(TimeMid,SexName)
+        country_data <- bind_rows(selected_data,MLT_data_selection) %>% arrange(TimeMid,SexName)
         }
         
         # loop over gaps and estimate a LC model -----------------------------------
@@ -505,29 +584,48 @@ fill_gaps_lt <- function(country_db = NULL,
                         split(list(.$Sex, .$Date), drop = T) %>% 
                         lapply(function(X){
                                 print(paste0(unique(X$Sex),"-", unique(X$Date)))
-                                # X <- final_data %>% filter(Date==2007.5,Sex=="f")
+                                # X <- final_data %>% filter(Date==2016.5,Sex=="f")
                                 X_sex <- unique(X$Sex)
                                 X_ages <- X$Age
                                 # for some reason realted to initial values in optimization, some few country-year-sex abridged lt don´t converge. Try 5 times. The last one with Makeham
                                 LT <- NULL
                                 attempt <- 1
-                                while(is.null(LT) && attempt<=5) {
-                                        if(attempt<5){
+                                while(is.null(LT) && attempt<=7) {
+                                        if(attempt %in% 1:5){
                                                 try(
+                                                        # using default option in DemoToools
                                                         LT <- lt_abridged2single(nMx = X$nMx,
                                                                                  Age = X_ages,
-                                                                                 Sex = X_sex)
+                                                                                 Sex = X_sex,
+                                                                                 a0rule = "cd", region = "w",)
                                                 )
-                                        }else{
+                                        }else if(attempt==6){
                                                 try(
+                                                        # use no default method to extend
                                                         LT <- lt_abridged2single(nMx = X$nMx,
                                                                              Age = X_ages,
-                                                                             Sex = X_sex,extrapLaw = "Makeham")
+                                                                             Sex = X_sex,
+                                                                             a0rule = "cd", region = "w",,
+                                                                             extrapLaw = "Makeham")
                                                         )
-                                                log_print(paste0("Warning: Year ",unique(X$Date)," was graduated to single age using Makeham instead of Kannisto for not producing an error."))
+                                                log_print(paste0("Warning: Year ",unique(X$Date),
+                                                                 " possibly with input data problems. Take a look and remove if is neccesary."))
+                                        }else{
+                                                        # extreme case: at least return something and decide later
+                                                        Age_output <- 0:100
+                                                        lx_smooth <- data.frame(Age = Age_output, 
+                                                                                lx = splinefun(x = X_ages, 
+                                                                                               y = X$lx, 
+                                                                                               method = "monoH.FC")(Age_output))
+                                                try(
+                                                        LT <- lt_single_qx(nqx = lt_id_l_q(lx_smooth$lx),Age = Age_output, 
+                                                                           Sex = X_sex, 
+                                                                           # a0rule = "cd", region = "w",
+                                                                           OAnew = OAnew)        
+                                                )
                                         }
                                         attempt <- attempt + 1
-                                } 
+                                }
                                 # if is not possible to graduate
                                 if(is.null(LT)){
                                         stop(paste0("Error with year ",unique(X$Date),". It is very irregular for graduating to complete."))
@@ -541,12 +639,22 @@ fill_gaps_lt <- function(country_db = NULL,
                                 return(LT)
                         }) %>% 
                         bind_rows()
-                final_data <- final_data_abr
+                final_data <- final_data_abr %>%
+                        arrange(Date, Sex, Age)
+        }
+
+        # plan B adjustment old ages: ratio method ----------------------------
+        # dates_adj = 1950:1964; min_age_adj = 60
+        dates_adj <- NULL
+        if(!is.null(dates_adj)){
+                final_data <- old_age_adj(final_data, dates_adj, min_age_adj) %>%
+                        arrange(Date, Sex, Age)
         }
 
         # output smoothing -----------------------------------------------------
 
-        final_data_smooth <- final_data %>% 
+        final_data_smooth <- final_data  %>%
+                arrange(Date, Sex, Age) %>% 
                 split(.$Sex) %>% 
                 lapply(function(X){
                         # X <- final_data %>% filter(Sex=="m")
@@ -618,11 +726,12 @@ fill_gaps_lt <- function(country_db = NULL,
                         }else{
                                 M_smooth_MS <- exp(fit2D$logmortality)
                         }
+                        min_rate <- min(lt_data$nMx)/2
                         M_hat_MS <- M_smooth_MS %>% 
                                 as.data.frame() %>% 
                                 mutate(Age = X_Ages) %>% 
                                 pivot_longer(cols=-Age, names_to="Date",values_to="nMx") %>% 
-                                mutate(Sex = X_sex)
+                                mutate(Sex = X_sex, nMx = pmax(min_rate,nMx))
                         LT_hat_MS <- M_hat_MS %>% split(.$Date) %>% 
                                 lapply(function(Y){
                                         LT_hat <- lt_single_mx(nMx = Y$nMx, Age = Y$Age, 
@@ -654,23 +763,31 @@ fill_gaps_lt <- function(country_db = NULL,
                                 mort_inputs$adjust_disasters_mortality+
                                 mort_inputs$adjust_COVID19_mortality))
         
-        final_data_mc <- final_LT %>% 
-                left_join(mort_crises %>%
-                                  left_join(mort_inputs %>% select(time_start, sex, adjust_crisis_true),
-                                            by = c("time_start", "sex")) %>% 
-                                  filter(adjust_crisis_true) %>% 
-                                  select(Date=TimeMid, Age=age_start, Sex=Sex, value),
-                          by = c("Age", "Date", "Sex")) %>% 
-                split(list(.$Date, .$Sex), drop = T) %>% 
-                lapply(function(X){
-                        X$value <-  ifelse(is.na(X$value), 0, X$value)
-                        X$nMx_adj <- X$nMx + X$value
-                        LT <- lt_single_mx(X$nMx_adj, X$Age, Sex = unique(X$Sex), extrapFrom = OAnew)
-                        LT$Date <- as.numeric(unique(X$Date))
-                        LT$Source <- unique(X$Source)
-                        LT$Sex  <- unique(X$Sex)
-                        return(LT)
-                }) %>% bind_rows()
+        if(!is.na(mort_crises$time_start[1])){
+                final_data_mc <- final_LT %>% 
+                        left_join(mort_crises %>%
+                                          left_join(mort_inputs %>% select(time_start, sex, adjust_crisis_true),
+                                                    by = c("time_start", "sex")) %>% 
+                                          filter(adjust_crisis_true) %>% 
+                                          select(Date=TimeMid, Age=age_start, Sex=Sex, value),
+                                  by = c("Age", "Date", "Sex")) %>% 
+                        split(list(.$Date, .$Sex), drop = T) %>% 
+                        lapply(function(X){
+                                # print(paste0(unique(X$Sex),"-", unique(X$Date)))
+                                # X <- pepe %>% filter(Date==2016.5,Sex=="f")
+                                X_sex <- unique(X$Sex)
+                                X$value <-  ifelse(is.na(X$value), 0, X$value)
+                                X$nMx_adj <- X$nMx + X$value
+                                LT <- lt_single_mx(X$nMx_adj, X$Age, Sex = unique(X$Sex), extrapFrom = OAnew)
+                                LT$Date <- as.numeric(unique(X$Date))
+                                LT$Source <- unique(X$Source)
+                                LT$Sex  <- unique(X$Sex)
+                                return(LT)
+                        }) %>% bind_rows()    
+        }else{
+                final_data_mc <- final_LT
+        }
+        
         
         # outputs -----------------------------------------------------------------
         
@@ -689,7 +806,7 @@ fill_gaps_lt <- function(country_db = NULL,
                                                      nLx = X$nLx,
                                                      ex = X$ex, 
                                                      Age = X$Age, 
-                                                     Sex = unique(Y$Sex))
+                                                     Sex = unique(X$Sex))
                         LT$Sex <- unique(X$Sex)
                         LT$Date <- as.numeric(unique(X$Date))
                         LT$Source <- unique(X$Source)

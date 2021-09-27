@@ -29,10 +29,10 @@
         # XXX_Mx5_XEstimates-Sex-Ratios-Age-Profiles
 
 # gral function for naming and wirting plots as svg
-write_plots <- function(dir_plots, output, smoothing = "None", dir_HMD, complete_abridged){
+write_plots <- function(dir_plots, output, smoothing = "None", dir_HMD, complete_abridged, mort_params, mort_inputs){
         
         # rename
-        # load("LifeTables/AuxFiles/BRA_output.Rdata")
+        # load("LifeTables/AuxFiles/BGR_output.Rdata")
         # dir_HMD <- "LifeTables/AuxFiles"
         # dir_plots <- "WPP2021_plots"
         name_code = output$name$Code_iso
@@ -135,12 +135,51 @@ write_plots <- function(dir_plots, output, smoothing = "None", dir_HMD, complete
                 print(plot_old_age(name, country_data, post_old_age_adj, selected_data))
                 dev.off()        
         }
+        svg(file.path(dir_plots,paste0(name_code,"_LT1_XEmpirical-Setting.svg")), width=22*.9, height=12*.9)
+        df <- plot_summary(mort_params, mort_inputs)
+        grid.table(df)
+        dev.off()
 }
 
+# plot summary parameters selected
+plot_summary <- function(mort_params, mort_inputs){
+        adjust_crisis_true <- as.logical(pmin(1,mort_inputs$adjust_conflict_mortality+
+                                                      mort_inputs$adjust_disasters_mortality+
+                                                      mort_inputs$adjust_COVID19_mortality))
+        Empirical_LT_exclude_data_source <- mort_params$Empirical_LT_exclude_data_source
+        adjust_LT_under_five <- mort_inputs$adjust_LT_under_five
+        adjust_LT_oldage <- mort_inputs$adjust_LT_oldage
+        df <- data.frame(
+                Parameter = c("Age_Specific_Mortality_Type",
+                              "Age_Specific_Mortality_Input_Data",
+                              "Adjusted the input (moving averages)",
+                              "Adjusted the output (APC or AP)",
+                              "Empirical_LT_exclude_data_source",
+                              "Mortality crisis shocks in years",
+                              "VR_completeness: average",
+                              "adjust_LT_under_five",
+                              "adjust_LT_oldage"),
+                Setting = c(mort_params$Age_Specific_Mortality_Type,
+                            mort_params$Age_Specific_Mortality_Input_Data,
+                            mort_params$Empirical_LT_smoothing_input,
+                            mort_params$Empirical_LT_smoothing_output,
+                            ifelse(is.na(Empirical_LT_exclude_data_source),"None",Empirical_LT_exclude_data_source),
+                            ifelse(is.null(adjust_crisis_true),"None",
+                                   paste0(unique(rep(1950:2020,2)[adjust_crisis_true]),collapse = "-")),
+                            mean(mort_inputs$VR_completeness),
+                            ifelse(any(adjust_LT_under_five),
+                                   paste0(unique(rep(1950:2020,2)[mort_inputs$adjust_LT_under_five]),collapse = "-"),"None"),
+                            ifelse(any(adjust_LT_oldage),
+                                   paste0(unique(rep(1950:2020,2)[mort_inputs$adjust_LT_oldage]),collapse = "-"),"None")
+                ) %>% as.character()
+        )
+        rownames(df) <- NULL 
+        return(df)
+}
 # plot available and selected data
 plot_data_selected <- function(name, data, selected_data, country=NULL){
         
-        personal_theme = theme(plot.title = element_text(hjust = 0.5),
+        personal_theme <- theme(plot.title = element_text(hjust = 0.5),
                                text = element_text(size = 16),
                                plot.margin=grid::unit(c(0,0,0,0), "mm"),
                                plot.caption = element_text(color = 1, face = "italic", size=11))
@@ -426,11 +465,33 @@ plot_trends <- function(name, country_data, x = NULL, country_data_smooth = NULL
                         personal_theme
         }
         if(x=="ex"){
-                gg <- ggplot(data = country_data %>% filter(Age%in%c(0,60,80)),
-                       aes(x=Date,y=ex)) + 
+                top_3_max_min <-  bind_rows(
+                        country_data %>%
+                        filter(Age%in%c(0,60,80)) %>% 
+                        group_by(Age, Sex) %>% 
+                        slice_max(ex, n=5),
+                        country_data %>%
+                        filter(Age%in%c(0,60,80)) %>% 
+                        group_by(Age, Sex) %>%
+                        slice_min(ex, n=5)) %>% 
+                        mutate(label_max_min = paste0(round(ex,1),"\n",Date)) %>% 
+                        select(Date,Sex,Age,label_max_min)
+                        
+                gg <- ggplot(data = country_data %>% 
+                                     filter(Age%in%c(0,60,80)) %>% 
+                                     left_join(top_3_max_min, by=c("Date","Sex","Age")),
+                        aes(x=Date,y=ex, label=label_max_min)) + 
+                        geom_smooth(method = "lm", se = F, linetype=2, col="grey", formula = y ~ x)+
+                        # stat_regline_equation(label.y = 70) +
                         geom_line(col="grey")+
                         geom_point(aes(col=`Source/Method`,shape=`Source/Method`)) +
                         labs(y=TeX("$e_{x}$"),x="Year", caption = Sys.time())+
+                        ggrepel::geom_text_repel(size=3, col="black",
+                                                 seed = 42, box.padding = 1,
+                                                 min.segment.length = 1, 
+                                                 segment.color="grey", max.overlaps = Inf,
+                                                 point.size = NA) +
+                        
                         theme_bw()+
                         scale_x_continuous(breaks = seq(1950,2020,10), 
                                            labels = seq(1950,2020,10))+
